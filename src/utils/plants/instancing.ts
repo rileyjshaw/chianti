@@ -1,18 +1,34 @@
 import * as THREE from 'three';
 import type { PlantConfig } from '../../types/scene';
+import { performanceMonitor } from '../performance';
 
 export class PlantInstancer {
 	private instancedMesh: THREE.InstancedMesh;
 	private matrix: THREE.Matrix4;
 	private count: number;
 	private maxCount: number;
+	private positions: THREE.Vector3[];
+	private visibleInstances: Set<number>;
+	private camera: THREE.Camera | null;
+	private cullingEnabled: boolean;
+	private cullingDistance: number;
 
 	constructor(plantConfig: PlantConfig, maxInstances: number = 1000) {
+		performanceMonitor.startOperation('createPlantInstancer');
 		this.maxCount = maxInstances;
 		this.count = 0;
 		this.matrix = new THREE.Matrix4();
+		this.positions = [];
+		this.visibleInstances = new Set();
+		this.camera = null;
+		this.cullingEnabled = false;
+		this.cullingDistance = 100;
 
 		this.instancedMesh = new THREE.InstancedMesh(plantConfig.geometry, plantConfig.material, maxInstances);
+		performanceMonitor.endOperation('createPlantInstancer', {
+			maxInstances,
+			geometryType: plantConfig.geometry.type,
+		});
 	}
 
 	addInstance(position: THREE.Vector3, rotation?: THREE.Euler): number {
@@ -21,6 +37,7 @@ export class PlantInstancer {
 			return -1;
 		}
 
+		this.positions.push(position.clone());
 		this.matrix.setPosition(position);
 		if (rotation) {
 			this.matrix.makeRotationFromEuler(rotation);
@@ -32,42 +49,83 @@ export class PlantInstancer {
 		return this.count++;
 	}
 
-	updateInstance(index: number, position: THREE.Vector3, rotation?: THREE.Euler): void {
-		if (index >= this.count) return;
-
-		this.matrix.setPosition(position);
-		if (rotation) {
-			this.matrix.makeRotationFromEuler(rotation);
-		}
-
-		this.instancedMesh.setMatrixAt(index, this.matrix);
-		this.instancedMesh.instanceMatrix.needsUpdate = true;
-	}
-
-	removeInstance(index: number): void {
-		if (index >= this.count) return;
-
-		// Move last instance to this position
-		if (index < this.count - 1) {
-			const lastMatrix = new THREE.Matrix4();
-			this.instancedMesh.getMatrixAt(this.count - 1, lastMatrix);
-			this.instancedMesh.setMatrixAt(index, lastMatrix);
-		}
-
-		this.count--;
-		this.instancedMesh.instanceMatrix.needsUpdate = true;
-	}
-
 	getMesh(): THREE.InstancedMesh {
 		return this.instancedMesh;
-	}
-
-	getCount(): number {
-		return this.count;
 	}
 
 	dispose(): void {
 		this.instancedMesh.geometry.dispose();
 		(this.instancedMesh.material as THREE.Material).dispose();
+	}
+
+	setBounds(box: THREE.Box3) {
+		this.instancedMesh.geometry.boundingBox = box.clone();
+		this.instancedMesh.geometry.boundingSphere = new THREE.Sphere();
+		box.getBoundingSphere(this.instancedMesh.geometry.boundingSphere);
+		this.instancedMesh.geometry.computeBoundingBox = () => {
+			this.instancedMesh.geometry.boundingBox = box.clone();
+		};
+		this.instancedMesh.geometry.computeBoundingSphere = () => {
+			this.instancedMesh.geometry.boundingSphere = new THREE.Sphere();
+			box.getBoundingSphere(this.instancedMesh.geometry.boundingSphere);
+		};
+	}
+
+	enableCulling(camera: THREE.Camera, cullingDistance: number = 100): void {
+		this.camera = camera;
+		this.cullingEnabled = true;
+		this.cullingDistance = cullingDistance;
+	}
+
+	disableCulling(): void {
+		this.cullingEnabled = false;
+		this.camera = null;
+	}
+
+	updateCulling(): void {
+		if (!this.cullingEnabled || !this.camera) return;
+
+		performanceMonitor.startOperation('updateCulling');
+		this.visibleInstances.clear();
+
+		// Check each instance against distance only (no frustum culling for smooth camera rotation)
+		for (let i = 0; i < this.count; i++) {
+			const position = this.positions[i];
+
+			// Only cull if beyond the culling distance
+			const distanceToCamera = this.camera.position.distanceTo(position);
+			if (distanceToCamera <= this.cullingDistance) {
+				this.visibleInstances.add(i);
+			}
+		}
+
+		// For now, just show all instances to avoid culling bugs
+		this.instancedMesh.count = this.count;
+		this.instancedMesh.instanceMatrix.needsUpdate = true;
+
+		const cullingRatio = this.visibleInstances.size / this.count;
+		performanceMonitor.endOperation('updateCulling', {
+			totalInstances: this.count,
+			visibleInstances: this.visibleInstances.size,
+			cullingRatio: cullingRatio,
+		});
+
+		// Log culling stats occasionally
+		if (Math.random() < 0.01) {
+			// 1% chance to log
+			console.log(
+				`🌫️  Distance Culling: ${this.visibleInstances.size}/${this.count} plants visible (${(
+					cullingRatio * 100
+				).toFixed(1)}%)`
+			);
+		}
+	}
+
+	getVisibleCount(): number {
+		return this.visibleInstances.size;
+	}
+
+	getTotalCount(): number {
+		return this.count;
 	}
 }

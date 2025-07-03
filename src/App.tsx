@@ -1,316 +1,423 @@
-import { useState, useDeferredValue } from 'react';
+import { useState, useDeferredValue, useEffect, useMemo } from 'react';
 import { HillScene } from './components/HillScene';
-import { placementMethods } from './utils/plants';
+import { performanceMonitor, logMemoryUsage, trackRender } from './utils/performance';
+import { placementMethods, getRandomPlacementMethod } from './utils/plants';
+import {
+	PlantType,
+	DEFAULT_GRID_SIZE,
+	DEFAULT_PLANT_SIZE,
+	DEFAULT_NUM_VORONOI_CELLS,
+	DEFAULT_ROUGHNESS,
+	DEFAULT_NUM_HILLS,
+	DEFAULT_HEIGHT_SCALE,
+	SHOW_CONFIG_CONTROLS,
+} from './types/scene';
 
 function App() {
+	// Track React renders
+	trackRender('App');
+
+	// Flag to control whether to show the controls UI
+	const showControls = SHOW_CONFIG_CONTROLS;
+
 	// All controls that affect scene generation
-	const [gridSize, setGridSize] = useState(24);
-	const [plantSize, setPlantSize] = useState(0.5);
-	const [cellSize, setCellSize] = useState(16);
-	const [heightScale, setHeightScale] = useState(50);
-	const [roughness, setRoughness] = useState(0.5);
-	const [numHills, setNumHills] = useState(2);
+	const [gridSize, setGridSize] = useState(DEFAULT_GRID_SIZE);
+	const [plantSize, setPlantSize] = useState(DEFAULT_PLANT_SIZE);
+	const [voronoiCells, setVoronoiCells] = useState(DEFAULT_NUM_VORONOI_CELLS);
+	const [heightScale, setHeightScale] = useState(DEFAULT_HEIGHT_SCALE);
+	const [roughness, setRoughness] = useState(DEFAULT_ROUGHNESS);
+	const [numHills, setNumHills] = useState(DEFAULT_NUM_HILLS);
+
+	// Add regeneration counter to force terrain regeneration
+	const [regenerationCounter, setRegenerationCounter] = useState(0);
+
+	// Keyboard event listener for 'R' key to regenerate terrain
+	useEffect(() => {
+		const handleKeyPress = (event: KeyboardEvent) => {
+			// Only trigger if not typing in an input field
+			if (
+				event.key.toLowerCase() === 'r' &&
+				!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+			) {
+				console.log('🔄 MANUAL REGENERATION TRIGGERED');
+				console.log('📋 Current parameters:');
+				console.log(`  - Grid size: ${gridSize}`);
+				console.log(`  - Voronoi cells: ${voronoiCells}`);
+				console.log(`  - Plant size: ${plantSize}`);
+				console.log(`  - Height scale: ${heightScale}`);
+				console.log(`  - Roughness: ${roughness}`);
+				console.log(`  - Number of hills: ${numHills}`);
+				logMemoryUsage('Before manual regeneration');
+				setRegenerationCounter(prev => prev + 1);
+			}
+		};
+
+		window.addEventListener('keydown', handleKeyPress);
+		return () => {
+			window.removeEventListener('keydown', handleKeyPress);
+		};
+	}, []);
 
 	// Defer all values that affect scene generation to prevent UI blocking
 	const deferredGridSize = useDeferredValue(gridSize);
 	const deferredPlantSize = useDeferredValue(plantSize);
-	const deferredCellSize = useDeferredValue(cellSize);
+	const deferredVoronoiCells = useDeferredValue(voronoiCells);
 	const deferredHeightScale = useDeferredValue(heightScale);
 	const deferredRoughness = useDeferredValue(roughness);
 	const deferredNumHills = useDeferredValue(numHills);
+	const deferredRegenerationCounter = useDeferredValue(regenerationCounter);
+
+	// Memoize the deferred values object to prevent unnecessary re-renders
+	const deferredValues = useMemo(
+		() => ({
+			gridSize: deferredGridSize,
+			plantSize: deferredPlantSize,
+			voronoiCells: deferredVoronoiCells,
+			heightScale: deferredHeightScale,
+			roughness: deferredRoughness,
+			numHills: deferredNumHills,
+			regenerationCounter: deferredRegenerationCounter,
+		}),
+		[
+			deferredGridSize,
+			deferredPlantSize,
+			deferredVoronoiCells,
+			deferredHeightScale,
+			deferredRoughness,
+			deferredNumHills,
+			deferredRegenerationCounter,
+		]
+	);
 
 	// Check if we're using deferred values (indicates pending update)
 	const isPending =
 		deferredGridSize !== gridSize ||
 		deferredPlantSize !== plantSize ||
-		deferredCellSize !== cellSize ||
+		deferredVoronoiCells !== voronoiCells ||
 		deferredHeightScale !== heightScale ||
 		deferredRoughness !== roughness ||
-		deferredNumHills !== numHills;
+		deferredNumHills !== numHills ||
+		deferredRegenerationCounter !== regenerationCounter;
+
+	// Log when deferred values change
+	useEffect(() => {
+		if (isPending) {
+			console.log('🔄 React: Deferred values pending update');
+			logMemoryUsage('Before deferred update');
+		} else if (!isPending && deferredGridSize !== undefined) {
+			console.log('✅ React: Deferred values applied');
+			logMemoryUsage('After deferred update');
+		}
+	}, [isPending, deferredGridSize]);
 
 	return (
 		<div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-			<div
-				style={{
-					padding: '15px',
-					background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-					borderBottom: '2px solid #4a5568',
-					boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-				}}
-			>
-				<h2
-					style={{
-						margin: '0 0 15px 0',
-						color: 'white',
-						fontSize: '24px',
-						fontWeight: '600',
-						textShadow: '0 1px 2px rgba(0,0,0,0.3)',
-					}}
-				>
-					Hill Scene Test
-					{isPending && (
-						<span
-							style={{
-								marginLeft: '10px',
-								fontSize: '14px',
-								opacity: 0.8,
-								fontWeight: 'normal',
-							}}
-						>
-							🔄 Updating scene...
-						</span>
-					)}
-				</h2>
-
-				{/* All Controls - All values are deferred for smooth interaction */}
+			{showControls && (
 				<div
 					style={{
-						display: 'flex',
-						gap: '25px',
-						alignItems: 'center',
-						flexWrap: 'wrap',
+						padding: '15px',
+						background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+						borderBottom: '2px solid #4a5568',
+						boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
 					}}
 				>
-					<div
+					<h2
 						style={{
-							background: 'rgba(255,255,255,0.95)',
-							padding: '12px 16px',
-							borderRadius: '8px',
-							boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-							minWidth: '200px',
-							border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
-							opacity: isPending ? 0.8 : 1,
+							margin: '0 0 15px 0',
+							color: 'white',
+							fontSize: '24px',
+							fontWeight: '600',
+							textShadow: '0 1px 2px rgba(0,0,0,0.3)',
 						}}
 					>
-						<label
+						Configuration
+						{isPending && (
+							<span
+								style={{
+									marginLeft: '10px',
+									fontSize: '14px',
+									opacity: 0.8,
+									fontWeight: 'normal',
+								}}
+							>
+								🔄 Updating scene...
+							</span>
+						)}
+					</h2>
+					<div
+						style={{
+							marginBottom: '15px',
+							color: 'white',
+							fontSize: '14px',
+							opacity: 0.9,
+							fontStyle: 'italic',
+						}}
+					>
+						💡 Press{' '}
+						<kbd
 							style={{
-								display: 'block',
-								marginBottom: '8px',
-								fontWeight: '600',
-								color: '#2d3748',
+								background: 'rgba(255,255,255,0.2)',
+								padding: '2px 6px',
+								borderRadius: '3px',
+								fontFamily: 'monospace',
 							}}
 						>
-							Grid Size: {gridSize}
-							{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
-						</label>
-						<input
-							type="range"
-							min="4"
-							max="32"
-							value={gridSize}
-							onChange={e => setGridSize(Number(e.target.value))}
-							style={{
-								width: '100%',
-								height: '6px',
-								borderRadius: '3px',
-								background: '#e2e8f0',
-								outline: 'none',
-								cursor: 'pointer',
-							}}
-						/>
+							R
+						</kbd>{' '}
+						to regenerate terrain
 					</div>
 
+					{/* All Controls - All values are deferred for smooth interaction */}
 					<div
 						style={{
-							background: 'rgba(255,255,255,0.95)',
-							padding: '12px 16px',
-							borderRadius: '8px',
-							boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-							minWidth: '200px',
-							border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
-							opacity: isPending ? 0.8 : 1,
+							display: 'flex',
+							gap: '25px',
+							alignItems: 'center',
+							flexWrap: 'wrap',
 						}}
 					>
-						<label
+						<div
 							style={{
-								display: 'block',
-								marginBottom: '8px',
-								fontWeight: '600',
-								color: '#2d3748',
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
 							}}
 						>
-							Cell Size: {cellSize}
-							{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
-						</label>
-						<input
-							type="range"
-							min="8"
-							max="32"
-							step="8"
-							value={cellSize}
-							onChange={e => setCellSize(Number(e.target.value))}
-							style={{
-								width: '100%',
-								height: '6px',
-								borderRadius: '3px',
-								background: '#e2e8f0',
-								outline: 'none',
-								cursor: 'pointer',
-							}}
-						/>
-					</div>
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
+								Heightmap Size: {gridSize}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="16"
+								max="1024"
+								step="16"
+								value={gridSize}
+								onChange={e => setGridSize(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
 
-					<div
-						style={{
-							background: 'rgba(255,255,255,0.95)',
-							padding: '12px 16px',
-							borderRadius: '8px',
-							boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-							minWidth: '200px',
-							border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
-							opacity: isPending ? 0.8 : 1,
-						}}
-					>
-						<label
+						<div
 							style={{
-								display: 'block',
-								marginBottom: '8px',
-								fontWeight: '600',
-								color: '#2d3748',
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
 							}}
 						>
-							Plant Size: {plantSize}
-							{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
-						</label>
-						<input
-							type="range"
-							min="0.05"
-							max="5"
-							step="0.05"
-							value={plantSize}
-							onChange={e => setPlantSize(Number(e.target.value))}
-							style={{
-								width: '100%',
-								height: '6px',
-								borderRadius: '3px',
-								background: '#e2e8f0',
-								outline: 'none',
-								cursor: 'pointer',
-							}}
-						/>
-					</div>
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
+								Voronoi Cells: {voronoiCells}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="4"
+								max="256"
+								step="4"
+								value={voronoiCells}
+								onChange={e => setVoronoiCells(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
 
-					<div
-						style={{
-							background: 'rgba(255,255,255,0.95)',
-							padding: '12px 16px',
-							borderRadius: '8px',
-							boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-							minWidth: '200px',
-							border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
-							opacity: isPending ? 0.8 : 1,
-						}}
-					>
-						<label
+						<div
 							style={{
-								display: 'block',
-								marginBottom: '8px',
-								fontWeight: '600',
-								color: '#2d3748',
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
 							}}
 						>
-							Height Scale: {heightScale}
-							{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
-						</label>
-						<input
-							type="range"
-							min="1"
-							max="100"
-							step="1"
-							value={heightScale}
-							onChange={e => setHeightScale(Number(e.target.value))}
-							style={{
-								width: '100%',
-								height: '6px',
-								borderRadius: '3px',
-								background: '#e2e8f0',
-								outline: 'none',
-								cursor: 'pointer',
-							}}
-						/>
-					</div>
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
+								Plant Size: {plantSize}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="0.05"
+								max="5"
+								step="0.05"
+								value={plantSize}
+								onChange={e => setPlantSize(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
 
-					<div
-						style={{
-							background: 'rgba(255,255,255,0.95)',
-							padding: '12px 16px',
-							borderRadius: '8px',
-							boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-							minWidth: '200px',
-							border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
-							opacity: isPending ? 0.8 : 1,
-						}}
-					>
-						<label
+						<div
 							style={{
-								display: 'block',
-								marginBottom: '8px',
-								fontWeight: '600',
-								color: '#2d3748',
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
 							}}
 						>
-							Roughness: {roughness}
-							{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
-						</label>
-						<input
-							type="range"
-							min="0.1"
-							max="1.0"
-							step="0.1"
-							value={roughness}
-							onChange={e => setRoughness(Number(e.target.value))}
-							style={{
-								width: '100%',
-								height: '6px',
-								borderRadius: '3px',
-								background: '#e2e8f0',
-								outline: 'none',
-								cursor: 'pointer',
-							}}
-						/>
-					</div>
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
+								Height Scale: {heightScale}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="1"
+								max="100"
+								step="1"
+								value={heightScale}
+								onChange={e => setHeightScale(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
 
-					<div
-						style={{
-							background: 'rgba(255,255,255,0.95)',
-							padding: '12px 16px',
-							borderRadius: '8px',
-							boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-							minWidth: '200px',
-							border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
-							opacity: isPending ? 0.8 : 1,
-						}}
-					>
-						<label
+						<div
 							style={{
-								display: 'block',
-								marginBottom: '8px',
-								fontWeight: '600',
-								color: '#2d3748',
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
 							}}
 						>
-							Number of Hills: {numHills}
-							{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
-						</label>
-						<input
-							type="range"
-							min="0"
-							max="16"
-							step="1"
-							value={numHills}
-							onChange={e => setNumHills(Number(e.target.value))}
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
+								Roughness: {roughness}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="0.1"
+								max="1.0"
+								step="0.1"
+								value={roughness}
+								onChange={e => setRoughness(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
+
+						<div
 							style={{
-								width: '100%',
-								height: '6px',
-								borderRadius: '3px',
-								background: '#e2e8f0',
-								outline: 'none',
-								cursor: 'pointer',
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
 							}}
-						/>
+						>
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
+								Number of Hills: {numHills}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="0"
+								max="16"
+								step="1"
+								value={numHills}
+								onChange={e => setNumHills(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
 					</div>
 				</div>
-			</div>
+			)}
 			<div style={{ flex: 1, position: 'relative' }}>
 				{isPending && (
 					<div
@@ -342,17 +449,24 @@ function App() {
 						Updating scene...
 					</div>
 				)}
+				{/* Regeneration feedback removed */}
 				<HillScene
-					gridX={deferredGridSize}
-					gridY={deferredGridSize}
-					cellX={deferredCellSize}
-					cellY={deferredCellSize}
-					plantSize={deferredPlantSize}
-					roughness={deferredRoughness}
+					gridX={deferredValues.gridSize}
+					gridY={deferredValues.gridSize}
+					numVoronoiCells={deferredValues.voronoiCells}
+					plantSize={deferredValues.plantSize}
+					roughness={deferredValues.roughness}
 					cellSpacing={2}
-					heightScale={deferredHeightScale}
-					numHills={deferredNumHills}
-					getPlantPlacement={() => placementMethods.placeRows}
+					heightScale={deferredValues.heightScale}
+					numHills={deferredValues.numHills}
+					regenerationCounter={deferredValues.regenerationCounter}
+					getPlantPlacement={(cellId: number, plantType: PlantType) => {
+						// Use sparse placement for bales, random for others
+						if (plantType === PlantType.BALE) {
+							return placementMethods.placeSparse;
+						}
+						return getRandomPlacementMethod();
+					}}
 				/>
 			</div>
 
@@ -360,6 +474,13 @@ function App() {
 				@keyframes spin {
 					0% { transform: rotate(0deg); }
 					100% { transform: rotate(360deg); }
+				}
+				
+				@keyframes fadeInOut {
+					0% { opacity: 0; transform: translateY(-10px); }
+					20% { opacity: 1; transform: translateY(0); }
+					80% { opacity: 1; transform: translateY(0); }
+					100% { opacity: 0; transform: translateY(-10px); }
 				}
 				
 				input[type="range"]::-webkit-slider-thumb {

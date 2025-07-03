@@ -28,5 +28,6 @@ export function generateHill(
 			}
 		}
 	}
+
 	return heights;
 }

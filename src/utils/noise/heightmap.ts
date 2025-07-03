@@ -12,16 +12,24 @@ export function generateHeightmap(
 	height: number,
 	maxHillRadius: number,
 	roughness: number,
-	numHills: number = 2
+	numHills: number = 2,
+	seed: number = 0
 ): [Float32Array, HighestPoint] {
-	const hills = Array.from({ length: numHills }, () => {
-		const offsetAngle = Math.random() * 2 * Math.PI;
-		const offsetMagnitude = Math.random() * maxHillRadius;
+	// Create a seeded random number generator
+	const seededRandom = (min: number, max: number) => {
+		const x = Math.sin(seed++) * 10000;
+		return min + (x - Math.floor(x)) * (max - min);
+	};
+
+	const hills = Array.from({ length: numHills }, (_, i) => {
+		const offsetAngle = seededRandom(0, 2 * Math.PI);
+		const offsetMagnitude = seededRandom(0, maxHillRadius);
 		const centerX = width / 2 + offsetMagnitude * Math.cos(offsetAngle);
 		const centerY = height / 2 + offsetMagnitude * Math.sin(offsetAngle);
-		const baseRadius = (0.5 + Math.random() * 0.5) * maxHillRadius;
-		const noiseRadius = 0.1 * baseRadius * (0.5 + Math.random());
-		return generateHill(width, height, centerX, centerY, baseRadius, noiseRadius);
+		const baseRadius = (0.5 + seededRandom(0, 0.5)) * maxHillRadius;
+		const noiseRadius = 0.1 * baseRadius * (0.5 + seededRandom(0, 1));
+		const hill = generateHill(width, height, centerX, centerY, baseRadius, noiseRadius);
+		return hill;
 	});
 
 	const hillSum = new Float32Array(width * height);

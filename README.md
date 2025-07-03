@@ -58,14 +58,16 @@ npm run build
 
 The application includes a control panel with sliders for:
 
--   **Grid Size** (4-32): Number of plots in each direction
--   **Cell Size** (8-32): Number of plants per plot
+-   **Grid Size** (16-1024): Number of plots in each direction
+-   **Voronoi Cells** (4-256): Number of Voronoi cells for plant distribution
 -   **Plant Size** (0.05-5): Size of individual plants
--   **Height Scale** (10-100): Vertical scaling of terrain
--   **Roughness** (0-1): Terrain roughness/mountainousness
--   **Number of Hills** (1-5): Number of hills to generate
+-   **Height Scale** (1-100): Vertical scaling of terrain
+-   **Roughness** (0.1-1.0): Terrain roughness/mountainousness
+-   **Number of Hills** (0-16): Number of hills to generate
 
 All controls use React's `useDeferredValue` for smooth interaction without blocking the UI.
+
+**Note**: Controls are hidden by default and can be enabled by setting `SHOW_CONFIG_CONTROLS` to `true` in `src/types/scene.ts`.
 
 ### Basic Usage
 

@@ -1,4 +1,5 @@
 import { createNoise2D } from 'simplex-noise';
+import { performanceMonitor } from '../performance';
 
 export function generateFBM(
 	width: number,
@@ -8,6 +9,8 @@ export function generateFBM(
 	lacunarity: number = 2,
 	persistence: number = 0.5
 ): Float32Array {
+	performanceMonitor.startOperation('generateFBM');
+
 	const noise2D = createNoise2D();
 	const heightmap = new Float32Array(width * height);
 
@@ -38,5 +41,6 @@ export function generateFBM(
 		}
 	}
 
+	performanceMonitor.endOperation('generateFBM', { width, height, octaves, totalPoints: width * height });
 	return heightmap;
 }
