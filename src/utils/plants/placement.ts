@@ -13,7 +13,7 @@ export const placementMethods = {
 		return true;
 	} as PlacementMethod,
 
-	placeRows: function placeRows(worldX: number, _worldY: number): boolean {
+	placeRows: function placeRows(worldX: number): boolean {
 		return worldX % 2 === 0;
 	} as PlacementMethod,
 

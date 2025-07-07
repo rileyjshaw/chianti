@@ -1,17 +1,18 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
-import { PlantType, DEFAULT_NUM_VORONOI_CELLS, DEFAULT_MAX_HILL_RADIUS } from '../types/scene';
+import { PlantType, DEFAULT_MAX_HILL_RADIUS } from '../types/scene';
 import type { HillSceneProps } from '../types/scene';
 import { createTerrainMesh } from '../utils/mesh';
 import { generateHeightmap, type HighestPoint } from '../utils/noise/heightmap';
 import { createPlantConfig, PlantInstancer } from '../utils/plants';
-import { generateVoronoiCells, getPlantDataForPosition } from '../utils/voronoi';
+import { generateVoronoiCells, getPlantDataForPosition, type VoronoiSystem } from '../utils/voronoi';
 import { RealisticSky } from './RealisticSky';
 
 function CameraController({ position, target }: { position: THREE.Vector3; target: THREE.Vector3 }) {
-	const controlsRef = useRef<any>(null);
+	const controlsRef = useRef<OrbitControlsImpl>(null);
 
 	useEffect(() => {
 		if (controlsRef.current) {
@@ -28,7 +29,7 @@ function HillSceneContent(
 	props: HillSceneProps & {
 		heightmap: Float32Array;
 		highestPoint: HighestPoint;
-		voronoiSystem: any;
+		voronoiSystem: VoronoiSystem;
 		regenerationCounter: number;
 	}
 ) {
@@ -56,21 +57,8 @@ function HillSceneContent(
 	useEffect(() => {
 		let isCancelled = false;
 
-		// Log the effect trigger
-		console.log(`🎯 Scene creation effect triggered with:`, {
-			gridWidth,
-			gridHeight,
-			numVoronoiCells,
-			plantSize,
-			plantSpacing,
-			heightScale,
-			heightmapLength: heightmap.length,
-			highestPoint,
-		});
-
 		// Clean up existing terrain and plants when dependencies change
 		if (terrainMesh !== null) {
-			console.log(`🔄 Cleaning up existing terrain for regeneration`);
 			setTerrainMesh(null);
 			setPlantInstancers([]);
 		}
@@ -144,20 +132,6 @@ function HillSceneContent(
 				if (!isCancelled) {
 					setTerrainMesh(terrain);
 					setPlantInstancers(instancers);
-
-					// Log final scene statistics
-					console.log('📈 Scene Statistics:');
-					console.log(`  - Grid size: ${gridWidth}x${gridHeight}`);
-					console.log(`  - Voronoi cells: ${numVoronoiCells}`);
-					console.log(`  - Plant size: ${plantSize}`);
-					console.log(`  - Height scale: ${heightScale}`);
-					console.log(
-						`  - Total plant instances: ${instancers.reduce(
-							(sum, instancer) => sum + instancer.getTotalCount(),
-							0
-						)}`
-					);
-					console.log(`  - Terrain vertices: ${terrain.geometry.attributes.position.count}`);
 				}
 			} catch (error) {
 				console.error('Error creating scene:', error);
@@ -169,6 +143,7 @@ function HillSceneContent(
 		return () => {
 			isCancelled = true;
 		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		gridWidth,
 		gridHeight,
@@ -182,11 +157,11 @@ function HillSceneContent(
 		voronoiSystem,
 		highestPoint,
 		regenerationCounter,
+		// terrainMesh,
 	]);
 
 	useEffect(() => {
 		return () => {
-			console.log(`🧹 Disposing ${plantInstancers.length} plant instancers`);
 			plantInstancers.forEach(instancer => instancer.dispose());
 		};
 	}, [plantInstancers]);
@@ -198,14 +173,6 @@ function HillSceneContent(
 		const cameraPositionY = heightmap[cameraPositionZ * gridWidth + cameraPositionX] * heightScale + plantSize * 8;
 		const cameraPositionWorldX = (cameraPositionX - gridWidth / 2) * plantSpacing;
 		const cameraPositionWorldZ = (cameraPositionZ - gridHeight / 2) * plantSpacing;
-		console.log(
-			'🔍 Camera position:',
-			cameraPositionX,
-			cameraPositionZ,
-			cameraPositionY,
-			cameraPositionWorldX,
-			cameraPositionWorldZ
-		);
 		const cameraPosition = new THREE.Vector3(cameraPositionWorldX, cameraPositionY, cameraPositionWorldZ);
 
 		// Always look at the highest point.
@@ -215,7 +182,7 @@ function HillSceneContent(
 		const cameraTarget = new THREE.Vector3(highestPointWorldX, (highestPointWorldY * 3) / 4, highestPointWorldZ);
 
 		return [cameraPosition, cameraTarget];
-	}, [gridWidth, gridHeight, plantSpacing, heightmap, heightScale, highestPoint]);
+	}, [gridWidth, gridHeight, plantSpacing, heightmap, heightScale, highestPoint, plantSize]);
 
 	return (
 		<>
@@ -239,16 +206,7 @@ export function HillScene(
 ) {
 	const { gridWidth, gridHeight, roughness, numHills, regenerationCounter = 0, getPlantType } = props;
 
-	// Memoize heightmap generation - regenerate when roughness, numHills, or regenerationCounter changes
 	const [heightmap, highestPoint] = useMemo(() => {
-		console.log(
-			`🗺️  Generating heightmap - Grid: ${gridWidth}x${gridHeight}, Hills: ${numHills}, Roughness: ${roughness}, Regeneration: ${regenerationCounter}`
-		);
-
-		// Check if this is a redundant calculation
-		const heightmapKey = `${gridWidth}x${gridHeight}_${numHills}_${roughness}_${regenerationCounter}`;
-		console.log(`🔑 Heightmap key: ${heightmapKey}`);
-
 		return generateHeightmap(
 			gridWidth,
 			gridHeight,
@@ -261,11 +219,6 @@ export function HillScene(
 
 	// Memoize Voronoi system to prevent redundant generation
 	const voronoiSystem = useMemo(() => {
-		console.log(
-			`🔷 Generating Voronoi cells - Grid: ${gridWidth}x${gridHeight}, Cells: ${
-				props.numVoronoiCells || DEFAULT_NUM_VORONOI_CELLS
-			}`
-		);
 		return generateVoronoiCells(
 			gridWidth,
 			gridHeight,
@@ -274,7 +227,7 @@ export function HillScene(
 			props.getPlantPlacement,
 			heightmap
 		);
-	}, [gridWidth, gridHeight, props.numVoronoiCells, props.getPlantType, props.getPlantPlacement, heightmap]);
+	}, [gridWidth, gridHeight, props.numVoronoiCells, getPlantType, props.getPlantPlacement, heightmap]);
 
 	return (
 		<div style={{ position: 'relative', width: '100%', height: '100%' }}>

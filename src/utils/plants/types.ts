@@ -5,7 +5,6 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export function createPlantConfig(type: PlantType, size: number = 1): PlantConfig {
 	let geometry: THREE.BufferGeometry;
-	let material: THREE.Material;
 
 	switch (type) {
 		case PlantType.BUSH:
@@ -17,7 +16,7 @@ export function createPlantConfig(type: PlantType, size: number = 1): PlantConfi
 			geometry = new THREE.CylinderGeometry(size, size, size * 2, 8); // Increased from 6 to 8
 			geometry.rotateZ(Math.PI / 2); // Rotate 90 degrees to lay on its side
 			break;
-		case PlantType.CYPRESS:
+		case PlantType.CYPRESS: {
 			const hemisphere = new THREE.SphereGeometry(size * 1.2, 12, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
 			const cone = new THREE.ConeGeometry(size * 1.2, size * 7, 12);
 			// Move the cone up so it sits on top of the hemisphere
@@ -26,6 +25,7 @@ export function createPlantConfig(type: PlantType, size: number = 1): PlantConfi
 			// Merge the geometries using Three.js BufferGeometryUtils
 			geometry = mergeGeometries([hemisphere, cone]);
 			break;
+		}
 		default:
 			geometry = new THREE.SphereGeometry(size, 6, 4);
 	}
@@ -45,9 +45,8 @@ export function createPlantConfig(type: PlantType, size: number = 1): PlantConfi
 			color = 0xff0000;
 	}
 
-	material = new THREE.MeshLambertMaterial({
+	const material = new THREE.MeshLambertMaterial({
 		color,
-		transparent: true,
 		opacity: 1.0,
 	});
 

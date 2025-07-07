@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 
 export function RealisticSky() {
 	const scene = useThree(state => state.scene);
-	const hdr = useLoader(RGBELoader, '/textures/sky/kloofendal_48d_partly_cloudy_puresky_4k.hdr');
+	const hdr = useLoader(RGBELoader, '/chianti/textures/sky/kloofendal_48d_partly_cloudy_puresky_4k.hdr');
 
 	useEffect(() => {
 		hdr.mapping = THREE.EquirectangularReflectionMapping;

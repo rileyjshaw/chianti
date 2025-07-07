@@ -95,18 +95,6 @@ export class PlantInstancer {
 		// For now, just show all instances to avoid culling bugs
 		this.instancedMesh.count = this.count;
 		this.instancedMesh.instanceMatrix.needsUpdate = true;
-
-		const cullingRatio = this.visibleInstances.size / this.count;
-
-		// Log culling stats occasionally
-		if (Math.random() < 0.01) {
-			// 1% chance to log
-			console.log(
-				`🌫️  Distance Culling: ${this.visibleInstances.size}/${this.count} plants visible (${(
-					cullingRatio * 100
-				).toFixed(1)}%)`
-			);
-		}
 	}
 
 	getVisibleCount(): number {

@@ -121,7 +121,6 @@ function findCellForPoint(point: THREE.Vector2, voronoiSystem: VoronoiSystem): V
 	// Find the grid cell containing this point
 	const gridWidth = Math.floor(point.x / voronoiSystem.gridSize);
 	const gridHeight = Math.floor(point.y / voronoiSystem.gridSize);
-	const key = `${gridWidth},${gridHeight}`;
 
 	// Get cells in this grid cell and neighboring cells
 	const candidates: VoronoiCell[] = [];

@@ -13,7 +13,7 @@ import {
 	SHOW_CONFIG_CONTROLS,
 } from './types/scene';
 
-function getPlantType(_x: number, y: number, _z: number): PlantType {
+function getPlantType(_x: number, y: number): PlantType {
 	if (y > 0.4) return PlantType.BUSH;
 
 	const random = Math.random();
@@ -27,7 +27,7 @@ function getPlantType(_x: number, y: number, _z: number): PlantType {
 	}
 }
 
-function getPlantPlacement(plantType: PlantType, _x: number, _y: number, _z: number) {
+function getPlantPlacement(plantType: PlantType) {
 	if (plantType === PlantType.BALE || plantType === PlantType.CYPRESS) {
 		return placementMethods.placeSparse;
 	}
@@ -58,15 +58,6 @@ function App() {
 				event.key.toLowerCase() === 'r' &&
 				!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
 			) {
-				console.log('🔄 MANUAL REGENERATION TRIGGERED');
-				console.log('📋 Current parameters:');
-				console.log(`  - Grid size: ${gridSize}`);
-				console.log(`  - Voronoi cells: ${voronoiCells}`);
-				console.log(`  - Plant size: ${plantSize}`);
-				console.log(`  - Plant spacing: ${plantSpacing}`);
-				console.log(`  - Height scale: ${heightScale}`);
-				console.log(`  - Roughness: ${roughness}`);
-				console.log(`  - Number of hills: ${numHills}`);
 				setRegenerationCounter(prev => prev + 1);
 			}
 		};
@@ -121,15 +112,6 @@ function App() {
 		deferredRoughness !== roughness ||
 		deferredNumHills !== numHills ||
 		deferredRegenerationCounter !== regenerationCounter;
-
-	// Log when deferred values change
-	useEffect(() => {
-		if (isPending) {
-			console.log('🔄 React: Deferred values pending update');
-		} else if (!isPending && deferredGridSize !== undefined) {
-			console.log('✅ React: Deferred values applied');
-		}
-	}, [isPending, deferredGridSize]);
 
 	return (
 		<div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column' }}>

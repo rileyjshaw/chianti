@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 async function loadGroundTexture(): Promise<THREE.Texture> {
 	const textureLoader = new THREE.TextureLoader();
-	const map = textureLoader.load('/textures/forest_ground/forest_ground_04_diff_4k.jpg');
+	const map = textureLoader.load('/chianti/textures/forest_ground/forest_ground_04_diff_4k.jpg');
 	map.wrapS = THREE.RepeatWrapping;
 	map.wrapT = THREE.RepeatWrapping;
 	map.repeat.set(32, 32);
