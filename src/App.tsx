@@ -1,11 +1,11 @@
 import { useState, useDeferredValue, useEffect, useMemo } from 'react';
 import { HillScene } from './components/HillScene';
-import { performanceMonitor, logMemoryUsage, trackRender } from './utils/performance';
 import { placementMethods, getRandomPlacementMethod } from './utils/plants';
 import {
 	PlantType,
 	DEFAULT_GRID_SIZE,
 	DEFAULT_PLANT_SIZE,
+	DEFAULT_PLANT_SPACING,
 	DEFAULT_NUM_VORONOI_CELLS,
 	DEFAULT_ROUGHNESS,
 	DEFAULT_NUM_HILLS,
@@ -13,16 +13,35 @@ import {
 	SHOW_CONFIG_CONTROLS,
 } from './types/scene';
 
-function App() {
-	// Track React renders
-	trackRender('App');
+function getPlantType(_x: number, y: number, _z: number): PlantType {
+	if (y > 0.4) return PlantType.BUSH;
 
+	const random = Math.random();
+	// 80% chance for bush, 10% chance for bale, 10% chance for cypress.
+	if (random < 0.8) {
+		return PlantType.BUSH;
+	} else if (random < 0.9) {
+		return PlantType.BALE;
+	} else {
+		return PlantType.CYPRESS;
+	}
+}
+
+function getPlantPlacement(plantType: PlantType, _x: number, _y: number, _z: number) {
+	if (plantType === PlantType.BALE || plantType === PlantType.CYPRESS) {
+		return placementMethods.placeSparse;
+	}
+	return getRandomPlacementMethod();
+}
+
+function App() {
 	// Flag to control whether to show the controls UI
 	const showControls = SHOW_CONFIG_CONTROLS;
 
 	// All controls that affect scene generation
 	const [gridSize, setGridSize] = useState(DEFAULT_GRID_SIZE);
 	const [plantSize, setPlantSize] = useState(DEFAULT_PLANT_SIZE);
+	const [plantSpacing, setPlantSpacing] = useState(DEFAULT_PLANT_SPACING);
 	const [voronoiCells, setVoronoiCells] = useState(DEFAULT_NUM_VORONOI_CELLS);
 	const [heightScale, setHeightScale] = useState(DEFAULT_HEIGHT_SCALE);
 	const [roughness, setRoughness] = useState(DEFAULT_ROUGHNESS);
@@ -44,10 +63,10 @@ function App() {
 				console.log(`  - Grid size: ${gridSize}`);
 				console.log(`  - Voronoi cells: ${voronoiCells}`);
 				console.log(`  - Plant size: ${plantSize}`);
+				console.log(`  - Plant spacing: ${plantSpacing}`);
 				console.log(`  - Height scale: ${heightScale}`);
 				console.log(`  - Roughness: ${roughness}`);
 				console.log(`  - Number of hills: ${numHills}`);
-				logMemoryUsage('Before manual regeneration');
 				setRegenerationCounter(prev => prev + 1);
 			}
 		};
@@ -61,6 +80,7 @@ function App() {
 	// Defer all values that affect scene generation to prevent UI blocking
 	const deferredGridSize = useDeferredValue(gridSize);
 	const deferredPlantSize = useDeferredValue(plantSize);
+	const deferredPlantSpacing = useDeferredValue(plantSpacing);
 	const deferredVoronoiCells = useDeferredValue(voronoiCells);
 	const deferredHeightScale = useDeferredValue(heightScale);
 	const deferredRoughness = useDeferredValue(roughness);
@@ -72,6 +92,7 @@ function App() {
 		() => ({
 			gridSize: deferredGridSize,
 			plantSize: deferredPlantSize,
+			plantSpacing: deferredPlantSpacing,
 			voronoiCells: deferredVoronoiCells,
 			heightScale: deferredHeightScale,
 			roughness: deferredRoughness,
@@ -81,6 +102,7 @@ function App() {
 		[
 			deferredGridSize,
 			deferredPlantSize,
+			deferredPlantSpacing,
 			deferredVoronoiCells,
 			deferredHeightScale,
 			deferredRoughness,
@@ -93,6 +115,7 @@ function App() {
 	const isPending =
 		deferredGridSize !== gridSize ||
 		deferredPlantSize !== plantSize ||
+		deferredPlantSpacing !== plantSpacing ||
 		deferredVoronoiCells !== voronoiCells ||
 		deferredHeightScale !== heightScale ||
 		deferredRoughness !== roughness ||
@@ -103,10 +126,8 @@ function App() {
 	useEffect(() => {
 		if (isPending) {
 			console.log('🔄 React: Deferred values pending update');
-			logMemoryUsage('Before deferred update');
 		} else if (!isPending && deferredGridSize !== undefined) {
 			console.log('✅ React: Deferred values applied');
-			logMemoryUsage('After deferred update');
 		}
 	}, [isPending, deferredGridSize]);
 
@@ -395,6 +416,46 @@ function App() {
 									color: '#2d3748',
 								}}
 							>
+								Plant Spacing: {plantSpacing}
+								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
+							</label>
+							<input
+								type="range"
+								min="0.1"
+								max="5.0"
+								step="0.1"
+								value={plantSpacing}
+								onChange={e => setPlantSpacing(Number(e.target.value))}
+								style={{
+									width: '100%',
+									height: '6px',
+									borderRadius: '3px',
+									background: '#e2e8f0',
+									outline: 'none',
+									cursor: 'pointer',
+								}}
+							/>
+						</div>
+
+						<div
+							style={{
+								background: 'rgba(255,255,255,0.95)',
+								padding: '12px 16px',
+								borderRadius: '8px',
+								boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+								minWidth: '200px',
+								border: isPending ? '2px solid #f6ad55' : '2px solid transparent',
+								opacity: isPending ? 0.8 : 1,
+							}}
+						>
+							<label
+								style={{
+									display: 'block',
+									marginBottom: '8px',
+									fontWeight: '600',
+									color: '#2d3748',
+								}}
+							>
 								Number of Hills: {numHills}
 								{isPending && <span style={{ color: '#f6ad55', marginLeft: '5px' }}>⏳</span>}
 							</label>
@@ -449,24 +510,18 @@ function App() {
 						Updating scene...
 					</div>
 				)}
-				{/* Regeneration feedback removed */}
 				<HillScene
-					gridX={deferredValues.gridSize}
-					gridY={deferredValues.gridSize}
+					gridWidth={deferredValues.gridSize}
+					gridHeight={deferredValues.gridSize}
 					numVoronoiCells={deferredValues.voronoiCells}
 					plantSize={deferredValues.plantSize}
 					roughness={deferredValues.roughness}
-					cellSpacing={2}
+					plantSpacing={deferredValues.plantSpacing}
 					heightScale={deferredValues.heightScale}
 					numHills={deferredValues.numHills}
 					regenerationCounter={deferredValues.regenerationCounter}
-					getPlantPlacement={(cellId: number, plantType: PlantType) => {
-						// Use sparse placement for bales, random for others
-						if (plantType === PlantType.BALE) {
-							return placementMethods.placeSparse;
-						}
-						return getRandomPlacementMethod();
-					}}
+					getPlantType={getPlantType}
+					getPlantPlacement={getPlantPlacement}
 				/>
 			</div>
 

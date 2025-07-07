@@ -5,7 +5,7 @@ export const DEFAULT_GRID_SIZE = 400;
 export const DEFAULT_NUM_VORONOI_CELLS = 64;
 export const DEFAULT_PLANT_SIZE = 0.5;
 export const DEFAULT_ROUGHNESS = 0.8;
-export const DEFAULT_CELL_SPACING = 1.5;
+export const DEFAULT_PLANT_SPACING = 2;
 export const DEFAULT_MAX_HILL_RADIUS = 64;
 export const DEFAULT_NUM_HILLS = 3;
 export const DEFAULT_HEIGHT_SCALE = 25;
@@ -28,12 +28,13 @@ export interface PlantConfig {
 export type PlacementMethod = (worldX: number, worldY: number) => boolean;
 
 export interface HillSceneProps {
-	gridX: number;
-	gridY: number;
-	numVoronoiCells?: number;
-	plantSize?: number;
-	roughness?: number;
-	cellSpacing?: number;
-	getPlantType?: (cellId: number) => PlantType;
-	getPlantPlacement?: (cellId: number, plantType: PlantType) => PlacementMethod;
+	gridWidth: number;
+	gridHeight: number;
+	numVoronoiCells: number;
+	plantSize: number;
+	roughness: number;
+	plantSpacing: number;
+	getPlantType: (x: number, y: number, z: number) => PlantType;
+	getPlantPlacement: (plantType: PlantType, x: number, y: number, z: number) => PlacementMethod;
+	heightScale: number;
 }

@@ -1,149 +1,52 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { performanceMonitor, logMemoryUsage, frameRateMonitor, trackRender } from '../utils/performance';
-import {
-	PlantType,
-	DEFAULT_GRID_SIZE,
-	DEFAULT_NUM_VORONOI_CELLS,
-	DEFAULT_PLANT_SIZE,
-	DEFAULT_ROUGHNESS,
-	DEFAULT_CELL_SPACING,
-	DEFAULT_MAX_HILL_RADIUS,
-	DEFAULT_NUM_HILLS,
-} from '../types/scene';
+import { PlantType, DEFAULT_NUM_VORONOI_CELLS, DEFAULT_MAX_HILL_RADIUS } from '../types/scene';
 import type { HillSceneProps } from '../types/scene';
 import { createTerrainMesh } from '../utils/mesh';
 import { generateHeightmap, type HighestPoint } from '../utils/noise/heightmap';
-import { createPlantConfig, PlantInstancer, getRandomPlacementMethod, placementMethods } from '../utils/plants';
-import { clearPlacementCache } from '../utils/plants/placement';
+import { createPlantConfig, PlantInstancer } from '../utils/plants';
 import { generateVoronoiCells, getPlantDataForPosition } from '../utils/voronoi';
-import { RealisticSky, Floor } from './RealisticSky';
+import { RealisticSky } from './RealisticSky';
 
-interface HillSceneWithScaleProps extends Omit<HillSceneProps, 'gridX' | 'gridY'> {
-	gridX: number;
-	gridY: number;
-	heightScale?: number;
-}
-
-// Function to get a random plant type with weighted probabilities
-const getRandomPlantType = (): PlantType => {
-	const random = Math.random();
-
-	// 80% chance for bush, 10% chance for bale, 10% chance for cypress
-	if (random < 0.8) {
-		return PlantType.BUSH;
-	} else if (random < 0.9) {
-		return PlantType.BALE;
-	} else {
-		return PlantType.CYPRESS;
-	}
-};
-
-function CameraController({ target, offsetSize }: { target: [number, number, number]; offsetSize: number }) {
+function CameraController({ position, target }: { position: THREE.Vector3; target: THREE.Vector3 }) {
 	const controlsRef = useRef<any>(null);
 
 	useEffect(() => {
 		if (controlsRef.current) {
-			controlsRef.current.object.position.set(target[0] - offsetSize, target[1] / 1.5, target[2] - offsetSize);
-			controlsRef.current.target.set(...target);
+			controlsRef.current.object.position.set(position.x, position.y, position.z);
+			controlsRef.current.target.set(target.x, target.y, target.z);
 			controlsRef.current.update();
 		}
-	}, [target, offsetSize]);
+	}, [position, target]);
 
 	return <OrbitControls ref={controlsRef} enableDamping={true} dampingFactor={0.05} />;
 }
 
-// Component to handle plant culling based on camera position and distance
-function PlantCullingManager({
-	plantInstancers,
-	fogDistance = 100,
-}: {
-	plantInstancers: PlantInstancer[];
-	fogDistance?: number;
-}) {
-	const { camera } = useThree();
-	const frameId = useRef<number | undefined>(undefined);
-	const lastCameraPosition = useRef<THREE.Vector3>(new THREE.Vector3());
-	const cullingThreshold = 10; // Only update culling if camera moves more than 10 units
-
-	useEffect(() => {
-		if (!camera || plantInstancers.length === 0) return;
-
-		console.log(
-			`🌫️  Enabling plant culling for ${plantInstancers.length} instancers with culling distance ${fogDistance}`
-		);
-
-		// Enable culling for all instancers
-		plantInstancers.forEach(instancer => {
-			instancer.enableCulling(camera, fogDistance);
-		});
-
-		// Update culling on each frame, but only if camera moved significantly
-		const updateCulling = () => {
-			const cameraMoved = camera.position.distanceTo(lastCameraPosition.current) > cullingThreshold;
-
-			if (cameraMoved) {
-				lastCameraPosition.current.copy(camera.position);
-				plantInstancers.forEach(instancer => {
-					instancer.updateCulling();
-				});
-			}
-
-			frameId.current = requestAnimationFrame(updateCulling);
-		};
-
-		updateCulling();
-
-		return () => {
-			if (frameId.current) {
-				cancelAnimationFrame(frameId.current);
-			}
-			// Disable culling when component unmounts
-			plantInstancers.forEach(instancer => {
-				instancer.disableCulling();
-			});
-			console.log('🌫️  Disabled plant culling');
-		};
-	}, [camera, plantInstancers, fogDistance]);
-
-	return null; // This component doesn't render anything
-}
-
-// Component to display performance statistics overlay
-function PerformanceStatsOverlay() {
-	// Removed the overlay - culling is disabled
-	return null;
-}
-
 function HillSceneContent(
-	props: HillSceneWithScaleProps & { heightmap: Float32Array; highestPoint: HighestPoint; voronoiSystem: any }
+	props: HillSceneProps & {
+		heightmap: Float32Array;
+		highestPoint: HighestPoint;
+		voronoiSystem: any;
+		regenerationCounter: number;
+	}
 ) {
-	// Track React renders
-	trackRender('HillSceneContent', {
-		gridX: props.gridX,
-		gridY: props.gridY,
-		plantSize: props.plantSize,
-	});
-
 	const [terrainMesh, setTerrainMesh] = useState<THREE.Mesh | null>(null);
 	const [plantInstancers, setPlantInstancers] = useState<PlantInstancer[]>([]);
 
-	// Create a stable random plant type function
-	const stableRandomPlantType = useCallback(() => getRandomPlantType(), []);
-
 	const {
-		gridX,
-		gridY,
-		numVoronoiCells = DEFAULT_NUM_VORONOI_CELLS,
-		plantSize = DEFAULT_PLANT_SIZE,
-		cellSpacing = DEFAULT_CELL_SPACING,
-		getPlantType = stableRandomPlantType,
-		getPlantPlacement = () => getRandomPlacementMethod(),
-		heightScale = 10,
+		gridWidth,
+		gridHeight,
+		numVoronoiCells,
+		plantSize,
+		plantSpacing,
+		getPlantType,
+		getPlantPlacement,
+		heightScale,
 		heightmap,
 		highestPoint,
+		regenerationCounter,
 	} = props;
 
 	// Use Voronoi system passed from parent component
@@ -155,82 +58,57 @@ function HillSceneContent(
 
 		// Log the effect trigger
 		console.log(`🎯 Scene creation effect triggered with:`, {
-			gridX,
-			gridY,
+			gridWidth,
+			gridHeight,
 			numVoronoiCells,
 			plantSize,
-			cellSpacing,
+			plantSpacing,
 			heightScale,
 			heightmapLength: heightmap.length,
 			highestPoint,
 		});
 
-		// Always create scene when heightmap changes, but clean up existing terrain first
+		// Clean up existing terrain and plants when dependencies change
 		if (terrainMesh !== null) {
 			console.log(`🔄 Cleaning up existing terrain for regeneration`);
 			setTerrainMesh(null);
 			setPlantInstancers([]);
-			// Return early to let the effect run again with clean state
-			return;
 		}
 
 		const createScene = async () => {
-			// Determine session type based on whether we have existing data
-			const sessionType = 'initial';
-			performanceMonitor.start(sessionType);
-			logMemoryUsage(`Scene creation start - ${sessionType}`);
-
 			try {
-				// Create terrain mesh using the heightmap (now async)
-				const terrain = await createTerrainMesh(heightmap, gridX, gridY, cellSpacing, heightScale);
-
+				const terrain = await createTerrainMesh(heightmap, gridWidth, gridHeight, plantSpacing, heightScale);
 				if (isCancelled) return;
 
-				// Group plants by type and placement method for efficient instancing
-				performanceMonitor.startOperation('groupPlants');
-				const plantGroups = new Map<string, Array<THREE.Vector3>>();
-
-				// Pre-calculate heightmap positions to avoid repeated calculations
-				const heightmapPositions = new Map<string, number>();
-				for (let worldY = 0; worldY < gridY; worldY++) {
-					for (let worldX = 0; worldX < gridX; worldX++) {
-						const heightIndex = worldY * gridX + worldX;
-						const height = heightmap[heightIndex] * heightScale;
-						heightmapPositions.set(`${worldX},${worldY}`, height);
-					}
-				}
+				// Group plants by type for efficient instancing.
+				const plantGroups = new Map<PlantType, Array<THREE.Vector3>>();
 
 				// Batch process plant placement with yielding
 				const batchSize = 1000;
 				let processedCount = 0;
-
-				for (let worldY = 0; worldY < gridY; worldY++) {
-					for (let worldX = 0; worldX < gridX; worldX++) {
+				// Place plants at every grid position, excluding top and left edges.
+				for (let y = 1; y < gridHeight; y++) {
+					for (let x = 1; x < gridWidth; x++) {
 						// Get plant data for this position from Voronoi system
-						const plantData = getPlantDataForPosition(worldX, worldY, voronoiSystem);
-
+						const plantData = getPlantDataForPosition(x, y, voronoiSystem);
 						if (!plantData) continue;
 
 						const { plantType, placementMethod } = plantData;
-						const methodName = placementMethod.name || 'unknown';
 
-						const groupKey = `${plantType}-${methodName}`;
-						if (!plantGroups.has(groupKey)) {
-							plantGroups.set(groupKey, []);
+						if (!plantGroups.has(plantType)) {
+							plantGroups.set(plantType, []);
 						}
-
 						// Check if we should place a plant at this position
-						if (placementMethod(worldX, worldY)) {
-							const height = heightmapPositions.get(`${worldX},${worldY}`)!;
-							const yPosition = height + (plantType === PlantType.BALE ? plantSize : plantSize / 2);
+						if (placementMethod(x, y)) {
+							const i = y * gridWidth + x;
+							const height = heightmap[i] * heightScale;
 
-							// Y is up, so use (x, height, y)
-							const position = new THREE.Vector3(
-								worldX * cellSpacing - (gridX * cellSpacing) / 2,
-								yPosition,
-								worldY * cellSpacing - (gridY * cellSpacing) / 2
-							);
-							plantGroups.get(groupKey)!.push(position);
+							const xPosition = (x - gridWidth / 2) * plantSpacing;
+							const yPosition = height + (plantType === PlantType.BALE ? plantSize : plantSize / 2);
+							const zPosition = (y - gridHeight / 2) * plantSpacing;
+
+							const position = new THREE.Vector3(xPosition, yPosition, zPosition);
+							plantGroups.get(plantType)!.push(position);
 						}
 
 						processedCount++;
@@ -240,29 +118,20 @@ function HillSceneContent(
 						}
 					}
 				}
-				performanceMonitor.endOperation('groupPlants', {
-					totalGroups: plantGroups.size,
-					totalPlants: Array.from(plantGroups.values()).reduce((sum, positions) => sum + positions.length, 0),
-					processedPositions: processedCount,
-				});
-
 				// Create instancers for each group
-				performanceMonitor.startOperation('createInstancers');
 				const instancers: PlantInstancer[] = [];
-				plantGroups.forEach((positions, groupKey) => {
-					const [plantType] = groupKey.split('-');
-					const config = createPlantConfig(plantType as PlantType, plantSize);
+				plantGroups.forEach((positions, plantType) => {
+					const config = createPlantConfig(plantType, plantSize);
 					const instancer = new PlantInstancer(config, positions.length);
 					positions.forEach(position => {
 						instancer.addInstance(position);
 					});
 					instancers.push(instancer);
 				});
-				performanceMonitor.endOperation('createInstancers', { numInstancers: instancers.length });
 
 				// Set bounding box for all instancers to cover the whole terrain
-				const terrainWidth = gridX * cellSpacing;
-				const terrainHeight = gridY * cellSpacing;
+				const terrainWidth = gridWidth * plantSpacing;
+				const terrainHeight = gridHeight * plantSpacing;
 				const min = new THREE.Vector3(-terrainWidth / 2, 0, -terrainHeight / 2);
 				const max = new THREE.Vector3(
 					terrainWidth / 2,
@@ -276,12 +145,9 @@ function HillSceneContent(
 					setTerrainMesh(terrain);
 					setPlantInstancers(instancers);
 
-					logMemoryUsage('Scene creation end');
-					performanceMonitor.end();
-
 					// Log final scene statistics
 					console.log('📈 Scene Statistics:');
-					console.log(`  - Grid size: ${gridX}x${gridY}`);
+					console.log(`  - Grid size: ${gridWidth}x${gridHeight}`);
 					console.log(`  - Voronoi cells: ${numVoronoiCells}`);
 					console.log(`  - Plant size: ${plantSize}`);
 					console.log(`  - Height scale: ${heightScale}`);
@@ -295,7 +161,6 @@ function HillSceneContent(
 				}
 			} catch (error) {
 				console.error('Error creating scene:', error);
-				performanceMonitor.end();
 			}
 		};
 
@@ -305,17 +170,18 @@ function HillSceneContent(
 			isCancelled = true;
 		};
 	}, [
-		gridX,
-		gridY,
+		gridWidth,
+		gridHeight,
 		numVoronoiCells,
 		plantSize,
-		cellSpacing,
+		plantSpacing,
 		getPlantType,
 		getPlantPlacement,
 		heightScale,
 		heightmap,
 		voronoiSystem,
 		highestPoint,
+		regenerationCounter,
 	]);
 
 	useEffect(() => {
@@ -325,31 +191,34 @@ function HillSceneContent(
 		};
 	}, [plantInstancers]);
 
-	// Note: Terrain reset is now handled within the scene creation effect
+	const [cameraPosition, cameraTarget] = useMemo(() => {
+		const cameraOffset = Math.round(gridWidth / 5);
+		const cameraPositionX = highestPoint.x - cameraOffset;
+		const cameraPositionZ = highestPoint.y - cameraOffset;
+		const cameraPositionY = heightmap[cameraPositionZ * gridWidth + cameraPositionX] * heightScale + plantSize * 8;
+		const cameraPositionWorldX = (cameraPositionX - gridWidth / 2) * plantSpacing;
+		const cameraPositionWorldZ = (cameraPositionZ - gridHeight / 2) * plantSpacing;
+		console.log(
+			'🔍 Camera position:',
+			cameraPositionX,
+			cameraPositionZ,
+			cameraPositionY,
+			cameraPositionWorldX,
+			cameraPositionWorldZ
+		);
+		const cameraPosition = new THREE.Vector3(cameraPositionWorldX, cameraPositionY, cameraPositionWorldZ);
 
-	// Cleanup frame rate monitor on unmount
-	useEffect(() => {
-		return () => {
-			console.log('🛑 Stopping frame rate monitor');
-			frameRateMonitor.stop();
-		};
-	}, []);
+		// Always look at the highest point.
+		const highestPointWorldX = (highestPoint.x - gridWidth / 2) * plantSpacing;
+		const highestPointWorldZ = (highestPoint.y - gridHeight / 2) * plantSpacing;
+		const highestPointWorldY = highestPoint.height * heightScale;
+		const cameraTarget = new THREE.Vector3(highestPointWorldX, (highestPointWorldY * 3) / 4, highestPointWorldZ);
 
-	// Calculate world coordinates for camera target
-	const worldHighestPointX = highestPoint.x * cellSpacing - (gridX * cellSpacing) / 2;
-	const worldHighestPointZ = highestPoint.y * cellSpacing - (gridY * cellSpacing) / 2;
-	const worldHighestPointY = highestPoint.height * heightScale;
-
-	// Always look at the highest point
-	const cameraTarget: [number, number, number] = [
-		worldHighestPointX,
-		(worldHighestPointY * 2) / 3,
-		worldHighestPointZ,
-	];
+		return [cameraPosition, cameraTarget];
+	}, [gridWidth, gridHeight, plantSpacing, heightmap, heightScale, highestPoint]);
 
 	return (
 		<>
-			{/* HDR Skybox */}
 			<RealisticSky />
 
 			{terrainMesh && <primitive object={terrainMesh} />}
@@ -357,69 +226,55 @@ function HillSceneContent(
 				<primitive key={index} object={instancer.getMesh()} />
 			))}
 
-			{/* Plant culling manager - temporarily disabled */}
-			{/* <PlantCullingManager plantInstancers={plantInstancers} fogDistance={500} /> */}
-
-			<CameraController target={cameraTarget} offsetSize={(gridX * cellSpacing) / 6} />
+			<CameraController position={cameraPosition} target={cameraTarget} />
 		</>
 	);
 }
 
 export function HillScene(
-	props: Partial<HillSceneProps> & {
-		heightScale?: number;
-		numHills?: number;
-		regenerationCounter?: number;
+	props: HillSceneProps & {
+		numHills: number;
+		regenerationCounter: number;
 	}
 ) {
-	// Track React renders
-	trackRender('HillScene', {
-		gridX: props.gridX,
-		gridY: props.gridY,
-		regenerationCounter: props.regenerationCounter,
-	});
-
-	const {
-		gridX = DEFAULT_GRID_SIZE,
-		gridY = DEFAULT_GRID_SIZE,
-		roughness = DEFAULT_ROUGHNESS,
-		numHills = DEFAULT_NUM_HILLS,
-		regenerationCounter = 0,
-	} = props;
+	const { gridWidth, gridHeight, roughness, numHills, regenerationCounter = 0, getPlantType } = props;
 
 	// Memoize heightmap generation - regenerate when roughness, numHills, or regenerationCounter changes
 	const [heightmap, highestPoint] = useMemo(() => {
 		console.log(
-			`🗺️  Generating heightmap - Grid: ${gridX}x${gridY}, Hills: ${numHills}, Roughness: ${roughness}, Regeneration: ${regenerationCounter}`
+			`🗺️  Generating heightmap - Grid: ${gridWidth}x${gridHeight}, Hills: ${numHills}, Roughness: ${roughness}, Regeneration: ${regenerationCounter}`
 		);
 
 		// Check if this is a redundant calculation
-		const heightmapKey = `${gridX}x${gridY}_${numHills}_${roughness}_${regenerationCounter}`;
+		const heightmapKey = `${gridWidth}x${gridHeight}_${numHills}_${roughness}_${regenerationCounter}`;
 		console.log(`🔑 Heightmap key: ${heightmapKey}`);
 
-		// Clear placement cache when regenerating
-		if (regenerationCounter > 0) {
-			clearPlacementCache();
-		}
-
-		return generateHeightmap(gridX, gridY, DEFAULT_MAX_HILL_RADIUS, roughness, numHills, regenerationCounter);
-	}, [gridX, gridY, roughness, numHills, regenerationCounter]);
+		return generateHeightmap(
+			gridWidth,
+			gridHeight,
+			DEFAULT_MAX_HILL_RADIUS,
+			roughness,
+			numHills,
+			regenerationCounter
+		);
+	}, [gridWidth, gridHeight, roughness, numHills, regenerationCounter]);
 
 	// Memoize Voronoi system to prevent redundant generation
 	const voronoiSystem = useMemo(() => {
 		console.log(
-			`🔷 Generating Voronoi cells - Grid: ${gridX}x${gridY}, Cells: ${
+			`🔷 Generating Voronoi cells - Grid: ${gridWidth}x${gridHeight}, Cells: ${
 				props.numVoronoiCells || DEFAULT_NUM_VORONOI_CELLS
 			}`
 		);
 		return generateVoronoiCells(
-			gridX,
-			gridY,
-			props.numVoronoiCells || DEFAULT_NUM_VORONOI_CELLS,
-			props.getPlantType || getRandomPlantType,
-			props.getPlantPlacement || (() => placementMethods.placeRandom)
+			gridWidth,
+			gridHeight,
+			props.numVoronoiCells,
+			getPlantType,
+			props.getPlantPlacement,
+			heightmap
 		);
-	}, [gridX, gridY, props.numVoronoiCells, props.getPlantType, props.getPlantPlacement]);
+	}, [gridWidth, gridHeight, props.numVoronoiCells, props.getPlantType, props.getPlantPlacement, heightmap]);
 
 	return (
 		<div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -443,23 +298,15 @@ export function HillScene(
 				onDragEnd={e => e.preventDefault()}
 				onMouseDown={e => e.preventDefault()}
 				onContextMenu={e => e.preventDefault()}
-				onCreated={() => {
-					console.log('🎬 Starting frame rate monitoring...');
-					frameRateMonitor.start();
-				}}
 			>
 				<HillSceneContent
 					{...props}
-					gridX={gridX}
-					gridY={gridY}
 					heightmap={heightmap}
 					highestPoint={highestPoint}
 					voronoiSystem={voronoiSystem}
+					regenerationCounter={regenerationCounter}
 				/>
 			</Canvas>
-
-			{/* Performance stats overlay */}
-			<PerformanceStatsOverlay />
 		</div>
 	);
 }

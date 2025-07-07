@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import type { PlantConfig } from '../../types/scene';
-import { performanceMonitor } from '../performance';
 
 export class PlantInstancer {
 	private instancedMesh: THREE.InstancedMesh;
@@ -14,7 +13,6 @@ export class PlantInstancer {
 	private cullingDistance: number;
 
 	constructor(plantConfig: PlantConfig, maxInstances: number = 1000) {
-		performanceMonitor.startOperation('createPlantInstancer');
 		this.maxCount = maxInstances;
 		this.count = 0;
 		this.matrix = new THREE.Matrix4();
@@ -25,10 +23,6 @@ export class PlantInstancer {
 		this.cullingDistance = 100;
 
 		this.instancedMesh = new THREE.InstancedMesh(plantConfig.geometry, plantConfig.material, maxInstances);
-		performanceMonitor.endOperation('createPlantInstancer', {
-			maxInstances,
-			geometryType: plantConfig.geometry.type,
-		});
 	}
 
 	addInstance(position: THREE.Vector3, rotation?: THREE.Euler): number {
@@ -85,7 +79,6 @@ export class PlantInstancer {
 	updateCulling(): void {
 		if (!this.cullingEnabled || !this.camera) return;
 
-		performanceMonitor.startOperation('updateCulling');
 		this.visibleInstances.clear();
 
 		// Check each instance against distance only (no frustum culling for smooth camera rotation)
@@ -104,11 +97,6 @@ export class PlantInstancer {
 		this.instancedMesh.instanceMatrix.needsUpdate = true;
 
 		const cullingRatio = this.visibleInstances.size / this.count;
-		performanceMonitor.endOperation('updateCulling', {
-			totalInstances: this.count,
-			visibleInstances: this.visibleInstances.size,
-			cullingRatio: cullingRatio,
-		});
 
 		// Log culling stats occasionally
 		if (Math.random() < 0.01) {
