@@ -1,107 +1,50 @@
 import * as THREE from 'three';
-import type { PlantConfig } from '../../types/scene';
+import { PlantType } from '../../types/scene';
+import type { Rng } from '../random';
+import { PLANT_COLORS, getPlantGeometry, getPlantMaterial } from './geometry';
 
-export class PlantInstancer {
-	private instancedMesh: THREE.InstancedMesh;
-	private matrix: THREE.Matrix4;
-	private count: number;
-	private maxCount: number;
-	private positions: THREE.Vector3[];
-	private visibleInstances: Set<number>;
-	private camera: THREE.Camera | null;
-	private cullingEnabled: boolean;
-	private cullingDistance: number;
+export interface PlantTransform {
+	x: number;
+	y: number;
+	z: number;
+	rotationY: number;
+	scale: number;
+}
 
-	constructor(plantConfig: PlantConfig, maxInstances: number = 1000) {
-		this.maxCount = maxInstances;
-		this.count = 0;
-		this.matrix = new THREE.Matrix4();
-		this.positions = [];
-		this.visibleInstances = new Set();
-		this.camera = null;
-		this.cullingEnabled = false;
-		this.cullingDistance = 100;
+/**
+ * Builds a single InstancedMesh for all plants of one type. Geometry and
+ * material are shared module-level singletons, so disposing the mesh only
+ * releases its per-instance buffers.
+ */
+export function createPlantMesh(type: PlantType, transforms: readonly PlantTransform[], rng: Rng): THREE.InstancedMesh {
+	const geometry = getPlantGeometry(type);
+	const mesh = new THREE.InstancedMesh(geometry, getPlantMaterial(type), transforms.length);
 
-		this.instancedMesh = new THREE.InstancedMesh(plantConfig.geometry, plantConfig.material, maxInstances);
+	const matrix = new THREE.Matrix4();
+	const position = new THREE.Vector3();
+	const quaternion = new THREE.Quaternion();
+	const scale = new THREE.Vector3();
+	const up = new THREE.Vector3(0, 1, 0);
+	const color = new THREE.Color();
+	const baseColor = new THREE.Color(PLANT_COLORS[type]);
+
+	for (let i = 0; i < transforms.length; i++) {
+		const t = transforms[i];
+		position.set(t.x, t.y, t.z);
+		quaternion.setFromAxisAngle(up, t.rotationY);
+		scale.setScalar(t.scale);
+		matrix.compose(position, quaternion, scale);
+		mesh.setMatrixAt(i, matrix);
+
+		// Subtle per-instance tonal variation keeps large fields from reading
+		// as a single flat color.
+		color.copy(baseColor).offsetHSL(0, 0, (rng() - 0.5) * 0.08);
+		mesh.setColorAt(i, color);
 	}
 
-	addInstance(position: THREE.Vector3, rotation?: THREE.Euler): number {
-		if (this.count >= this.maxCount) {
-			console.warn('PlantInstancer: Maximum instances reached');
-			return -1;
-		}
+	// Accurate frustum-culling bounds spanning every instance (stored on the
+	// mesh, not the shared geometry).
+	mesh.computeBoundingSphere();
 
-		this.positions.push(position.clone());
-		this.matrix.setPosition(position);
-		if (rotation) {
-			this.matrix.makeRotationFromEuler(rotation);
-		}
-
-		this.instancedMesh.setMatrixAt(this.count, this.matrix);
-		this.instancedMesh.instanceMatrix.needsUpdate = true;
-
-		return this.count++;
-	}
-
-	getMesh(): THREE.InstancedMesh {
-		return this.instancedMesh;
-	}
-
-	dispose(): void {
-		this.instancedMesh.geometry.dispose();
-		(this.instancedMesh.material as THREE.Material).dispose();
-	}
-
-	setBounds(box: THREE.Box3) {
-		this.instancedMesh.geometry.boundingBox = box.clone();
-		this.instancedMesh.geometry.boundingSphere = new THREE.Sphere();
-		box.getBoundingSphere(this.instancedMesh.geometry.boundingSphere);
-		this.instancedMesh.geometry.computeBoundingBox = () => {
-			this.instancedMesh.geometry.boundingBox = box.clone();
-		};
-		this.instancedMesh.geometry.computeBoundingSphere = () => {
-			this.instancedMesh.geometry.boundingSphere = new THREE.Sphere();
-			box.getBoundingSphere(this.instancedMesh.geometry.boundingSphere);
-		};
-	}
-
-	enableCulling(camera: THREE.Camera, cullingDistance: number = 100): void {
-		this.camera = camera;
-		this.cullingEnabled = true;
-		this.cullingDistance = cullingDistance;
-	}
-
-	disableCulling(): void {
-		this.cullingEnabled = false;
-		this.camera = null;
-	}
-
-	updateCulling(): void {
-		if (!this.cullingEnabled || !this.camera) return;
-
-		this.visibleInstances.clear();
-
-		// Check each instance against distance only (no frustum culling for smooth camera rotation)
-		for (let i = 0; i < this.count; i++) {
-			const position = this.positions[i];
-
-			// Only cull if beyond the culling distance
-			const distanceToCamera = this.camera.position.distanceTo(position);
-			if (distanceToCamera <= this.cullingDistance) {
-				this.visibleInstances.add(i);
-			}
-		}
-
-		// For now, just show all instances to avoid culling bugs
-		this.instancedMesh.count = this.count;
-		this.instancedMesh.instanceMatrix.needsUpdate = true;
-	}
-
-	getVisibleCount(): number {
-		return this.visibleInstances.size;
-	}
-
-	getTotalCount(): number {
-		return this.count;
-	}
+	return mesh;
 }

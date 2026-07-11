@@ -1,1 +1,1 @@
-export { createTerrainMesh } from './terrain';
+export { createTerrainGeometry, getTerrainMaterial } from './terrain';
