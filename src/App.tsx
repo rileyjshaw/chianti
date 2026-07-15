@@ -25,7 +25,9 @@ function getPlantPlacement(plantType: PlantType, _x: number, _y: number, _z: num
 
 function App() {
 	const [config, setConfig] = useState(DEFAULT_SCENE_CONFIG);
-	const [seed, setSeed] = useState(0);
+	// Start each page load on a fresh random landscape; pressing R walks
+	// deterministically from there, so a given seed always reproduces.
+	const [seed, setSeed] = useState(() => Math.floor(Math.random() * 0xffffffff));
 
 	// Press R to regenerate the landscape with a new seed.
 	useEffect(() => {
