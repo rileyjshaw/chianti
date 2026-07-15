@@ -74,16 +74,24 @@ All controls use React's `useDeferredValue` for smooth interaction without block
 ### Keyboard Controls
 
 -   **R Key**: Regenerate terrain with current parameters
+-   **WASD Keys**: Move the camera forward, left, backward, and right
 
 ### Basic Usage
 
 ```tsx
 import { HillScene } from './components/HillScene';
+import { DEFAULT_SCENE_CONFIG, PlantType } from './types/scene';
+import { placementMethods } from './utils/plants';
 
 function App() {
 	return (
 		<div style={{ width: '100vw', height: '100vh' }}>
-			<HillScene />
+			<HillScene
+				config={DEFAULT_SCENE_CONFIG}
+				seed={0}
+				getPlantType={() => PlantType.BUSH}
+				getPlantPlacement={() => placementMethods.random}
+			/>
 		</div>
 	);
 }
@@ -93,20 +101,27 @@ function App() {
 
 ```tsx
 import { HillScene } from './components/HillScene';
-import { PlantType } from './types/scene';
+import { DEFAULT_SCENE_CONFIG, PlantType } from './types/scene';
+import { placementMethods } from './utils/plants';
 
 function App() {
 	return (
 		<HillScene
-			gridWidth={400} // Number of grid cells in X direction
-			gridHeight={400} // Number of grid cells in Y direction
-			numVoronoiCells={64} // Number of Voronoi cells
-			plantSize={0.5} // Size of individual plants
-			roughness={0.8} // Terrain roughness (0-1)
-			plantSpacing={2} // Space between grid cells
-			heightScale={25} // Vertical scaling of terrain
-			getPlantType={(x, y, z) => PlantType.BUSH}
-			getPlantPlacement={(plantType, x, y, z) => placementMethods.placeRandom}
+			config={{
+				...DEFAULT_SCENE_CONFIG,
+				gridSize: 400,
+				voronoiCells: 64,
+				plantSize: 0.5,
+				roughness: 0.8,
+				plantSpacing: 2,
+				heightScale: 25,
+				numHills: 3,
+			}}
+			seed={42}
+			getPlantType={(_x, height) => (height > 0.4 ? PlantType.BUSH : PlantType.CYPRESS)}
+			getPlantPlacement={plantType =>
+				plantType === PlantType.BUSH ? placementMethods.dense : placementMethods.sparse
+			}
 		/>
 	);
 }
@@ -119,22 +134,22 @@ The project follows a modular architecture with clear separation of concerns:
 ```
 src/
 ├── components/          # React components
+│   ├── ControlPanel.tsx # Optional scene configuration controls
 │   ├── HillScene.tsx   # Main scene component with camera control
 │   └── RealisticSky.tsx # HDR sky rendering
 ├── utils/
 │   ├── noise/          # Noise generation and heightmap creation
-│   ├── erosion/        # Terrain erosion algorithms (placeholder)
 │   ├── mesh/           # Mesh generation and deformation
 │   ├── plants/         # Plant placement and instancing
-│   └── voronoi/        # Voronoi cell system for plant distribution
-├── workers/            # Web Workers (placeholder)
+│   ├── voronoi/        # Voronoi cell system for plant distribution
+│   └── random.ts       # Seeded random number generation
 └── types/              # TypeScript type definitions
 ```
 
 ### Key Components
 
 -   **HillScene**: Main component that orchestrates the entire scene with automatic camera positioning
--   **PlantInstancer**: Manages instanced meshes for efficient plant rendering
+-   **Plant mesh utilities**: Build shared plant geometry/materials and per-scene instanced meshes
 -   **Voronoi System**: Creates natural plant distribution using Voronoi cells
 -   **Multi-Hill System**: Creates realistic terrain using multiple overlapping hills
 -   **RealisticSky**: HDR sky rendering with atmospheric effects
@@ -155,22 +170,23 @@ export const PlantType = {
 
 -   **Instancing**: Plants are grouped by type to minimize draw calls
 -   **Deferred Updates**: All scene generation parameters use `useDeferredValue` to prevent UI blocking
--   **Memory Management**: Proper disposal of geometries and materials
--   **Spatial Optimization**: Voronoi system with grid-based lookup
--   **Batch Processing**: Plant placement with yielding to prevent blocking
+-   **Memory Management**: Shared geometry/materials with per-scene GPU buffer cleanup
+-   **Spatial Optimization**: Precomputed Voronoi assignment map with bucketed nearest-seed lookup
+-   **Bounded Terrain Work**: Hill accumulation only visits each hill's bounding box
+-   **Deterministic Generation**: A seeded PRNG drives terrain, Voronoi regions, and plant variation
 
 ## Customization
 
 ### Adding New Plant Types
 
 1. Add the new type to the `PlantType` object in `src/types/scene.ts`
-2. Update the `createPlantConfig` function in `src/utils/plants/types.ts`
-3. Add the corresponding geometry and material creation logic
+2. Add its color and unit geometry in `src/utils/plants/geometry.ts`
+3. Update any plant-specific transform rules in `src/utils/plants/distribute.ts`
 
 ### Adding New Placement Methods
 
 1. Add the new method to `placementMethods` in `src/utils/plants/placement.ts`
-2. The method should follow the signature: `(worldX: number, worldY: number) => boolean`
+2. The method should follow the signature: `(gridX: number, gridY: number, rng: Rng) => boolean`
 
 ### Custom Terrain Generation
 
@@ -198,11 +214,6 @@ export const PlantType = {
 5. **Camera System**: Automatic positioning at highest terrain point
 6. **Realistic Sky**: HDR sky rendering with atmospheric effects
 7. **Performance Optimizations**: Deferred updates and proper cleanup
-
-### 🔄 Partially Implemented
-
-1. **Erosion System**: Placeholder directory exists but not implemented
-2. **Web Workers**: Placeholder directory exists but not implemented
 
 ### ❌ Not Yet Implemented
 

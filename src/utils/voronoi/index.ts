@@ -1,201 +1,156 @@
-import * as THREE from 'three';
 import { PlantType } from '../../types/scene';
-import type { PlacementMethod } from '../../types/scene';
+import type { PlacementMethod } from '../plants/placement';
+import type { Rng } from '../random';
+import { randomRange } from '../random';
 
 export interface VoronoiCell {
-	id: number;
-	center: THREE.Vector2;
 	plantType: PlantType;
 	placementMethod: PlacementMethod;
 }
 
 export interface VoronoiSystem {
 	cells: VoronoiCell[];
+	/** Index into `cells` for every grid position (y * width + x). */
+	cellIndices: Uint16Array;
 	width: number;
 	height: number;
-	// Spatial grid for efficient lookup
-	grid: Map<string, VoronoiCell[]>;
-	gridSize: number;
 }
 
 /**
- * Generate Voronoi cells with random centers distributed across the terrain
+ * Partitions the grid into Voronoi regions around randomly scattered seed
+ * points, and assigns each region a plant type + placement method.
+ *
+ * The full assignment map is precomputed once with a bucketed
+ * nearest-neighbor search, so per-position lookups during plant placement
+ * are a single array read.
  */
 export function generateVoronoiCells(
 	width: number,
 	height: number,
 	numCells: number,
-	getPlantType: (x: number, y: number, z: number) => PlantType,
-	getPlacementMethod: (plantType: PlantType, x: number, y: number, z: number) => PlacementMethod,
-	heightmap: Float32Array
+	getPlantType: (x: number, y: number, z: number, rng: Rng) => PlantType,
+	getPlacementMethod: (plantType: PlantType, x: number, y: number, z: number, rng: Rng) => PlacementMethod,
+	heightmap: Float32Array,
+	rng: Rng
 ): VoronoiSystem {
-	const cells: VoronoiCell[] = [];
-
-	// Generate random cell centers with some minimum distance
-	const centers: THREE.Vector2[] = [];
-	const minDistance = (Math.min(width, height) / Math.sqrt(numCells)) * 0.8; // 80% of theoretical minimum
+	// Scatter seed points, rejecting ones that crowd existing seeds.
+	const centersX = new Float32Array(numCells);
+	const centersY = new Float32Array(numCells);
+	const minDistance = (Math.min(width, height) / Math.sqrt(numCells)) * 0.8;
+	const minDistanceSq = minDistance * minDistance;
 
 	for (let i = 0; i < numCells; i++) {
-		let attempts = 0;
-		let center: THREE.Vector2;
-
-		do {
-			center = new THREE.Vector2(Math.random() * width, Math.random() * height);
-			attempts++;
-		} while (attempts < 100 && centers.some(existing => center.distanceTo(existing) < minDistance));
-
-		centers.push(center);
-
-		const iX = Math.round(center.x);
-		const iZ = Math.round(center.y);
-		// X, Y, Z are normalized coordinates in the range [0, 1].
-		const x = center.x / width;
-		const y = heightmap[iX + iZ * width];
-		const z = center.y / height;
-
-		const plantType = getPlantType(x, y, z);
-		const placementMethod = getPlacementMethod(plantType, x, y, z);
-
-		cells.push({
-			id: i,
-			center,
-			plantType,
-			placementMethod,
-		});
+		let x = 0;
+		let y = 0;
+		for (let attempts = 0; attempts < 100; attempts++) {
+			x = randomRange(rng, 0, width);
+			y = randomRange(rng, 0, height);
+			let crowded = false;
+			for (let j = 0; j < i; j++) {
+				const dx = x - centersX[j];
+				const dy = y - centersY[j];
+				if (dx * dx + dy * dy < minDistanceSq) {
+					crowded = true;
+					break;
+				}
+			}
+			if (!crowded) break;
+		}
+		centersX[i] = x;
+		centersY[i] = y;
 	}
 
-	// Build spatial grid for efficient lookup
-	const gridSize = Math.max(minDistance * 2, 50); // Grid size based on minimum cell distance
-	const grid = buildSpatialGrid(cells, width, height, gridSize);
+	const cells: VoronoiCell[] = [];
+	for (let i = 0; i < numCells; i++) {
+		// Normalized [0, 1] coordinates: x/z across the terrain, y = elevation.
+		const nx = centersX[i] / width;
+		const nz = centersY[i] / height;
+		const ix = Math.min(width - 1, Math.round(centersX[i]));
+		const iz = Math.min(height - 1, Math.round(centersY[i]));
+		const ny = heightmap[iz * width + ix];
+
+		const plantType = getPlantType(nx, ny, nz, rng);
+		cells.push({ plantType, placementMethod: getPlacementMethod(plantType, nx, ny, nz, rng) });
+	}
 
 	return {
 		cells,
+		cellIndices: assignNearestCells(width, height, centersX, centersY),
 		width,
 		height,
-		grid,
-		gridSize,
 	};
 }
 
 /**
- * Build a spatial grid to accelerate cell lookups
+ * For every grid position, finds the index of the nearest seed point.
+ * Seeds are bucketed into a coarse grid; each query scans outward in rings
+ * of buckets and stops as soon as no closer seed can exist.
  */
-function buildSpatialGrid(
-	cells: VoronoiCell[],
-	width: number,
-	height: number,
-	gridSize: number
-): Map<string, VoronoiCell[]> {
-	const grid = new Map<string, VoronoiCell[]>();
+function assignNearestCells(width: number, height: number, centersX: Float32Array, centersY: Float32Array): Uint16Array {
+	const numCells = centersX.length;
+	const assignment = new Uint16Array(width * height);
+	if (numCells === 0) return assignment;
 
-	// For each cell, add it to all grid cells it could influence
-	for (const cell of cells) {
-		// Calculate the range of grid cells this cell could influence
-		// We need to check a bit beyond the cell's center to account for Voronoi boundaries
-		const influenceRadius = gridSize * 1.5;
-		const minX = Math.max(0, Math.floor((cell.center.x - influenceRadius) / gridSize));
-		const maxX = Math.min(Math.floor(width / gridSize), Math.floor((cell.center.x + influenceRadius) / gridSize));
-		const minY = Math.max(0, Math.floor((cell.center.y - influenceRadius) / gridSize));
-		const maxY = Math.min(Math.floor(height / gridSize), Math.floor((cell.center.y + influenceRadius) / gridSize));
+	// Bucket size ≈ expected seed spacing, so most queries touch ring 0-1.
+	const bucketSize = Math.max(1, Math.round(Math.min(width, height) / Math.sqrt(numCells)));
+	const bucketsX = Math.ceil(width / bucketSize);
+	const bucketsY = Math.ceil(height / bucketSize);
+	const maxRing = Math.max(bucketsX, bucketsY);
 
-		for (let gx = minX; gx <= maxX; gx++) {
-			for (let gy = minY; gy <= maxY; gy++) {
-				const key = `${gx},${gy}`;
-				if (!grid.has(key)) {
-					grid.set(key, []);
+	const buckets: number[][] = Array.from({ length: bucketsX * bucketsY }, () => []);
+	for (let i = 0; i < numCells; i++) {
+		const bx = Math.min(bucketsX - 1, Math.floor(centersX[i] / bucketSize));
+		const by = Math.min(bucketsY - 1, Math.floor(centersY[i] / bucketSize));
+		buckets[by * bucketsX + bx].push(i);
+	}
+
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			const bx = Math.min(bucketsX - 1, Math.floor(x / bucketSize));
+			const by = Math.min(bucketsY - 1, Math.floor(y / bucketSize));
+
+			let best = -1;
+			let bestDistSq = Infinity;
+
+			for (let ring = 0; ring <= maxRing; ring++) {
+				// Any seed in ring r+1 is at least r * bucketSize away, so once
+				// the current best beats that bound we can stop expanding.
+				if (best !== -1) {
+					const bound = (ring - 1) * bucketSize;
+					if (bound > 0 && bound * bound > bestDistSq) break;
 				}
-				grid.get(key)!.push(cell);
+
+				const minBX = Math.max(0, bx - ring);
+				const maxBX = Math.min(bucketsX - 1, bx + ring);
+				const minBY = Math.max(0, by - ring);
+				const maxBY = Math.min(bucketsY - 1, by + ring);
+
+				for (let gy = minBY; gy <= maxBY; gy++) {
+					for (let gx = minBX; gx <= maxBX; gx++) {
+						// Only scan the ring perimeter; inner buckets are done.
+						if (ring > 0 && gx !== minBX && gx !== maxBX && gy !== minBY && gy !== maxBY) continue;
+
+						for (const i of buckets[gy * bucketsX + gx]) {
+							const dx = x - centersX[i];
+							const dy = y - centersY[i];
+							const distSq = dx * dx + dy * dy;
+							if (distSq < bestDistSq) {
+								bestDistSq = distSq;
+								best = i;
+							}
+						}
+					}
+				}
 			}
+
+			assignment[y * width + x] = best;
 		}
 	}
 
-	return grid;
+	return assignment;
 }
 
-/**
- * Find which Voronoi cell a point belongs to using spatial grid optimization
- */
-function findCellForPoint(point: THREE.Vector2, voronoiSystem: VoronoiSystem): VoronoiCell | null {
-	if (voronoiSystem.cells.length === 0) return null;
-
-	// Find the grid cell containing this point
-	const gridWidth = Math.floor(point.x / voronoiSystem.gridSize);
-	const gridHeight = Math.floor(point.y / voronoiSystem.gridSize);
-
-	// Get cells in this grid cell and neighboring cells
-	const candidates: VoronoiCell[] = [];
-
-	// Check current grid cell and 8 neighbors (3x3 grid)
-	for (let dx = -1; dx <= 1; dx++) {
-		for (let dy = -1; dy <= 1; dy++) {
-			const neighborKey = `${gridWidth + dx},${gridHeight + dy}`;
-			const neighborCells = voronoiSystem.grid.get(neighborKey);
-			if (neighborCells) {
-				candidates.push(...neighborCells);
-			}
-		}
-	}
-
-	// Remove duplicates (cells can be in multiple grid cells)
-	const uniqueCandidates = candidates.filter((cell, index) => candidates.findIndex(c => c.id === cell.id) === index);
-
-	// Find closest among candidates
-	if (uniqueCandidates.length === 0) {
-		// Fallback to checking all cells if no candidates found
-		return findCellForPointFallback(point, voronoiSystem);
-	}
-
-	let closestCell = uniqueCandidates[0];
-	let closestDistance = point.distanceTo(closestCell.center);
-
-	for (let i = 1; i < uniqueCandidates.length; i++) {
-		const cell = uniqueCandidates[i];
-		const distance = point.distanceTo(cell.center);
-
-		if (distance < closestDistance) {
-			closestDistance = distance;
-			closestCell = cell;
-		}
-	}
-
-	return closestCell;
-}
-
-/**
- * Fallback method that checks all cells (used if spatial grid fails)
- */
-function findCellForPointFallback(point: THREE.Vector2, voronoiSystem: VoronoiSystem): VoronoiCell | null {
-	let closestCell = voronoiSystem.cells[0];
-	let closestDistance = point.distanceTo(closestCell.center);
-
-	for (let i = 1; i < voronoiSystem.cells.length; i++) {
-		const cell = voronoiSystem.cells[i];
-		const distance = point.distanceTo(cell.center);
-
-		if (distance < closestDistance) {
-			closestDistance = distance;
-			closestCell = cell;
-		}
-	}
-
-	return closestCell;
-}
-
-/**
- * Get plant type and placement method for a world position
- */
-export function getPlantDataForPosition(
-	x: number,
-	y: number,
-	voronoiSystem: VoronoiSystem
-): { plantType: PlantType; placementMethod: PlacementMethod } | null {
-	const point = new THREE.Vector2(x, y);
-	const cell = findCellForPoint(point, voronoiSystem);
-
-	if (!cell) return null;
-
-	return {
-		plantType: cell.plantType,
-		placementMethod: cell.placementMethod,
-	};
+/** Returns the Voronoi cell governing a grid position. */
+export function getCellForPosition(x: number, y: number, system: VoronoiSystem): VoronoiCell {
+	return system.cells[system.cellIndices[y * system.width + x]];
 }

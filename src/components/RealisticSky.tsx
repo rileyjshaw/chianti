@@ -1,61 +1,72 @@
 import { useThree } from '@react-three/fiber';
 import { RGBELoader } from 'three-stdlib';
 import * as THREE from 'three';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-const HDR_URL = '/chianti/textures/sky/kloofendal_48d_partly_cloudy_puresky_4k.hdr';
+const HDR_URL = `${import.meta.env.BASE_URL}textures/sky/kloofendal_48d_partly_cloudy_puresky_4k.hdr`;
+const ATMOSPHERE = '#c3a486';
+const SUN_POSITION: [number, number, number] = [50, 100, 50];
+
+interface SkyTextures {
+	background: THREE.DataTexture;
+	environmentTarget: THREE.WebGLRenderTarget;
+}
 
 export function RealisticSky() {
-	const scene = useThree(state => state.scene);
+	const gl = useThree(state => state.gl);
+	const [textures, setTextures] = useState<SkyTextures | null>(null);
 
-	// Fog + lighting are set up synchronously so the hillside renders
-	// immediately, without waiting on the (large) HDR skybox download.
-	useEffect(() => {
-		scene.fog = new THREE.Fog('#c3a486', 120, 400);
-
-		// Atmospheric placeholder background until the HDR finishes loading,
-		// so the scene comes up looking intentional rather than blank white.
-		const placeholder = new THREE.Color('#c3a486');
-		scene.background = placeholder;
-
-		const ambientLight = new THREE.AmbientLight('#c3a486', 0.7);
-		scene.add(ambientLight);
-
-		const directionalLight = new THREE.DirectionalLight('#ffffff', 0.6);
-		directionalLight.position.set(50, 100, 50);
-		scene.add(directionalLight);
-
-		return () => {
-			scene.remove(ambientLight);
-			scene.remove(directionalLight);
-			ambientLight.dispose();
-			directionalLight.dispose();
-			scene.fog = null;
-		};
-	}, [scene]);
-
-	// Skybox loads in the background and swaps in when ready — it never
-	// blocks the scene from rendering.
 	useEffect(() => {
 		let cancelled = false;
+		let hdr: THREE.DataTexture | null = null;
+		let environmentTarget: THREE.WebGLRenderTarget | null = null;
+		const pmrem = new THREE.PMREMGenerator(gl);
+		pmrem.compileEquirectangularShader();
 
-		new RGBELoader().load(HDR_URL, hdr => {
-			if (cancelled) {
-				hdr.dispose();
-				return;
+		// The HDR loads in the background. Once available, turn it into a PMREM
+		// for image-based lighting while retaining the sharp source as the sky.
+		new RGBELoader().load(
+			HDR_URL,
+			loadedHdr => {
+				if (cancelled) {
+					loadedHdr.dispose();
+					return;
+				}
+
+				loadedHdr.mapping = THREE.EquirectangularReflectionMapping;
+				hdr = loadedHdr;
+				environmentTarget = pmrem.fromEquirectangular(loadedHdr);
+				setTextures({ background: loadedHdr, environmentTarget });
+				pmrem.dispose();
+			},
+			undefined,
+			() => {
+				if (!cancelled) pmrem.dispose();
 			}
-			hdr.mapping = THREE.EquirectangularReflectionMapping;
-			scene.background = hdr;
-		});
+		);
 
 		return () => {
 			cancelled = true;
-			if (scene.background instanceof THREE.Texture) {
-				scene.background.dispose();
-			}
-			scene.background = null;
+			hdr?.dispose();
+			environmentTarget?.dispose();
+			pmrem.dispose();
 		};
-	}, [scene]);
+	}, [gl]);
 
-	return null;
+	return (
+		<>
+			<fog attach="fog" args={[ATMOSPHERE, 120, 400]} />
+			{textures ? (
+				<>
+					<primitive attach="background" object={textures.background} />
+					<primitive attach="environment" object={textures.environmentTarget.texture} />
+				</>
+			) : (
+				<color attach="background" args={[ATMOSPHERE]} />
+			)}
+			<ambientLight color={ATMOSPHERE} intensity={0.7} />
+			<directionalLight color="#fff4e0" intensity={1.1} position={SUN_POSITION} />
+			<hemisphereLight args={['#bcd4ff', ATMOSPHERE, 0.4]} />
+		</>
+	);
 }

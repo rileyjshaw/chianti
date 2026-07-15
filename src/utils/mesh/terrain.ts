@@ -1,48 +1,54 @@
 import * as THREE from 'three';
 
-async function loadGroundTexture(): Promise<THREE.Texture> {
-	const textureLoader = new THREE.TextureLoader();
-	const map = textureLoader.load('/chianti/textures/forest_ground/forest_ground_04_diff_4k.jpg');
-	map.wrapS = THREE.RepeatWrapping;
-	map.wrapT = THREE.RepeatWrapping;
-	map.repeat.set(32, 32);
-	map.generateMipmaps = true;
+const GROUND_TEXTURE_URL = `${import.meta.env.BASE_URL}textures/forest_ground/forest_ground_04_diff_4k.jpg`;
 
-	return map;
+let groundMaterial: THREE.MeshLambertMaterial | null = null;
+
+/**
+ * Shared terrain material. The texture starts loading on first use and pops
+ * in when ready; the material itself is reused across regenerations so the
+ * (large) ground texture is only ever fetched and uploaded once.
+ */
+export function getTerrainMaterial(): THREE.MeshLambertMaterial {
+	if (!groundMaterial) {
+		const map = new THREE.TextureLoader().load(GROUND_TEXTURE_URL);
+		map.wrapS = THREE.RepeatWrapping;
+		map.wrapT = THREE.RepeatWrapping;
+		map.repeat.set(32, 32);
+		map.colorSpace = THREE.SRGBColorSpace;
+		map.anisotropy = 4;
+
+		groundMaterial = new THREE.MeshLambertMaterial({
+			map,
+			color: new THREE.Color('#c8a27d'), // Reddish-brown tint.
+		});
+	}
+	return groundMaterial;
 }
 
-export async function createTerrainMesh(
+/**
+ * Builds the terrain geometry from a heightmap. The plane lies in the XY
+ * plane (Z = elevation); the caller rotates it flat via the mesh transform.
+ */
+export function createTerrainGeometry(
 	heightmap: Float32Array,
 	gridWidth: number,
 	gridHeight: number,
-	plantSpacing: number,
+	spacing: number,
 	heightScale: number
-): Promise<THREE.Mesh> {
+): THREE.PlaneGeometry {
 	const geometry = new THREE.PlaneGeometry(
-		gridWidth * plantSpacing,
-		gridHeight * plantSpacing,
-		gridWidth - 1, // Subtract 1 to create gridWidth x gridHeight vertices.
+		(gridWidth - 1) * spacing,
+		(gridHeight - 1) * spacing,
+		gridWidth - 1, // gridWidth x gridHeight vertices.
 		gridHeight - 1
 	);
 
-	geometry.attributes.position.array.forEach((_, i) =>
-		geometry.attributes.position.setZ(i, heightmap[i] * heightScale)
-	);
-	geometry.attributes.position.needsUpdate = true;
-
+	const position = geometry.attributes.position;
+	for (let i = 0; i < gridWidth * gridHeight; i++) {
+		position.setZ(i, heightmap[i] * heightScale);
+	}
 	geometry.computeVertexNormals();
 
-	const groundTexture = await loadGroundTexture();
-	const material = new THREE.MeshLambertMaterial({
-		map: groundTexture,
-		side: THREE.DoubleSide,
-		color: new THREE.Color('#c8a27d'), // Reddish-brown.
-	});
-
-	const mesh = new THREE.Mesh(geometry, material);
-	mesh.rotation.x = -Math.PI / 2; // Rotate so Y is up.
-
-	// Small offset to align with plant positions (half cell spacing).
-	mesh.position.set(-plantSpacing / 2, 0, -plantSpacing / 2);
-	return mesh;
+	return geometry;
 }

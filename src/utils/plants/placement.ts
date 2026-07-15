@@ -1,48 +1,25 @@
-export interface PlacementMethod {
-	(worldX: number, worldY: number): boolean;
-	name?: string;
-}
+import type { Rng } from '../random';
 
-// Simple placement methods
+/**
+ * Decides whether a plant should be placed at a grid position. Stochastic
+ * methods draw from the provided rng so placement is reproducible.
+ */
+export type PlacementMethod = (gridX: number, gridY: number, rng: Rng) => boolean;
+
 export const placementMethods = {
-	placeEmpty: function placeEmpty(): boolean {
-		return false;
-	} as PlacementMethod,
+	empty: () => false,
+	full: () => true,
+	rows: (gridX: number) => gridX % 2 === 0,
+	columns: (_gridX: number, gridY: number) => gridY % 2 === 0,
+	checkerboard: (gridX: number, gridY: number) => (gridX + gridY) % 2 === 0,
+	diagonal: (gridX: number, gridY: number) => (gridX + gridY) % 3 === 0,
+	dense: (_gridX: number, _gridY: number, rng: Rng) => rng() < 0.8,
+	random: (_gridX: number, _gridY: number, rng: Rng) => rng() < 0.5,
+	sparse: (_gridX: number, _gridY: number, rng: Rng) => rng() < 0.2,
+} satisfies Record<string, PlacementMethod>;
 
-	placeFull: function placeFull(): boolean {
-		return true;
-	} as PlacementMethod,
+const allMethods = Object.values(placementMethods);
 
-	placeRows: function placeRows(worldX: number): boolean {
-		return worldX % 2 === 0;
-	} as PlacementMethod,
-
-	placeColumns: function placeColumns(_worldX: number, worldY: number): boolean {
-		return worldY % 2 === 0;
-	} as PlacementMethod,
-
-	placeCheckerboard: function placeCheckerboard(worldX: number, worldY: number): boolean {
-		return (worldX + worldY) % 2 === 0;
-	} as PlacementMethod,
-
-	placeDiagonal: function placeDiagonal(worldX: number, worldY: number): boolean {
-		return (worldX + worldY) % 3 === 0;
-	} as PlacementMethod,
-
-	placeDense: function placeDense(): boolean {
-		return Math.random() < 0.8;
-	} as PlacementMethod,
-
-	placeRandom: function placeRandom(): boolean {
-		return Math.random() < 0.5;
-	} as PlacementMethod,
-
-	placeSparse: function placeSparse(): boolean {
-		return Math.random() < 0.2;
-	} as PlacementMethod,
-};
-
-export function getRandomPlacementMethod(): PlacementMethod {
-	const methods = Object.values(placementMethods);
-	return methods[Math.floor(Math.random() * methods.length)];
+export function getRandomPlacementMethod(rng: Rng): PlacementMethod {
+	return allMethods[Math.floor(rng() * allMethods.length)];
 }

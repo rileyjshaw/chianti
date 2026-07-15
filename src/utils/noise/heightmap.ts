@@ -1,5 +1,6 @@
+import { mulberry32, randomRange } from '../random';
 import { generateFBM } from './fbm';
-import { generateHill } from './hill';
+import { addHill } from './hill';
 
 export interface HighestPoint {
 	x: number;
@@ -7,6 +8,11 @@ export interface HighestPoint {
 	height: number;
 }
 
+/**
+ * Generates a terrain heightmap by blending a few large rounded hills with
+ * fBm noise, normalized so the highest point is 1. Fully deterministic for a
+ * given (dimensions, roughness, numHills, seed).
+ */
 export function generateHeightmap(
 	width: number,
 	height: number,
@@ -15,55 +21,44 @@ export function generateHeightmap(
 	numHills: number = 2,
 	seed: number = 0
 ): [Float32Array, HighestPoint] {
-	const seededRandom = (min: number, max: number) => {
-		const x = Math.sin(seed++) * 10000;
-		return min + (x - Math.floor(x)) * (max - min);
-	};
-
-	const hills = Array.from({ length: numHills }, () => {
-		const offsetAngle = seededRandom(0, 2 * Math.PI);
-		const offsetMagnitude = seededRandom(0, maxHillRadius);
-		const centerX = width / 2 + offsetMagnitude * Math.cos(offsetAngle);
-		const centerY = height / 2 + offsetMagnitude * Math.sin(offsetAngle);
-		const baseRadius = (0.5 + seededRandom(0, 0.5)) * maxHillRadius;
-		const noiseRadius = 0.1 * baseRadius * (0.5 + seededRandom(0, 1));
-		const hill = generateHill(width, height, centerX, centerY, baseRadius, noiseRadius);
-		return hill;
-	});
+	const rng = mulberry32(seed);
 
 	const hillSum = new Float32Array(width * height);
-	for (const hill of hills) {
-		for (let i = 0; i < hillSum.length; i++) {
-			hillSum[i] += hill[i] / numHills;
-		}
+	for (let i = 0; i < numHills; i++) {
+		const offsetAngle = randomRange(rng, 0, 2 * Math.PI);
+		const offsetMagnitude = randomRange(rng, 0, maxHillRadius);
+		const centerX = width / 2 + offsetMagnitude * Math.cos(offsetAngle);
+		const centerY = height / 2 + offsetMagnitude * Math.sin(offsetAngle);
+		const baseRadius = randomRange(rng, 0.5, 1) * maxHillRadius;
+		const noiseRadius = 0.1 * baseRadius * randomRange(rng, 0.5, 1.5);
+		addHill(hillSum, width, height, centerX, centerY, baseRadius, noiseRadius, 1 / numHills);
 	}
 
-	const fbm = generateFBM(width, height, 50, 4, 2, 0.5);
+	const fbm = generateFBM(width, height, rng, 50, 4, 2, 0.5);
 
 	const out = new Float32Array(width * height);
-	let highestPoint = null as unknown as HighestPoint;
+	const highestPoint: HighestPoint = { x: 0, y: 0, height: -Infinity };
 
 	for (let y = 0; y < height; ++y) {
 		for (let x = 0; x < width; ++x) {
 			const i = y * width + x;
-			const height = hillSum[i] * 0.7 + fbm[i] * roughness * 0.3;
-			out[i] = height;
+			const h = hillSum[i] * 0.7 + fbm[i] * roughness * 0.3;
+			out[i] = h;
 
-			if (!highestPoint || height > highestPoint.height) {
-				highestPoint = {
-					x,
-					y,
-					height,
-				};
+			if (h > highestPoint.height) {
+				highestPoint.x = x;
+				highestPoint.y = y;
+				highestPoint.height = h;
 			}
 		}
 	}
-	// Normalize heightmap to highest point
-	if (highestPoint && highestPoint.height > 0) {
+
+	// Normalize so the highest point sits at exactly 1.
+	if (highestPoint.height > 0) {
+		const scale = 1 / highestPoint.height;
 		for (let i = 0; i < out.length; i++) {
-			out[i] = out[i] / highestPoint.height;
+			out[i] *= scale;
 		}
-		// Update highest point height to 1 after normalization.
 		highestPoint.height = 1;
 	}
 
